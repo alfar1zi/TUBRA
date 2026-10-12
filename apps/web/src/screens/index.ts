@@ -1,0 +1,15 @@
+export { S0Home } from "./S0Home";
+export { S1Consent } from "./S1Consent";
+export { S2Gate } from "./S2Gate";
+export { S2xOutOfRange } from "./S2xOutOfRange";
+export { S2yNotTime } from "./S2yNotTime";
+export { S3Symptoms } from "./S3Symptoms";
+export { S4PrepRecord } from "./S4PrepRecord";
+export { S5Record } from "./S5Record";
+export { S6QualityCheck } from "./S6QualityCheck";
+export { S7Analyze } from "./S7Analyze";
+export { S8Result } from "./S8Result";
+export { S9Why } from "./S9Why";
+export { S10NextSteps } from "./S10NextSteps";
+export { S11HowItWorks } from "./S11HowItWorks";
+export { S12Privacy } from "./S12Privacy";

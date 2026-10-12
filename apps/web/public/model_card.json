@@ -1,0 +1,20 @@
+{
+  "model_version": "demo-coughvid-0.1",
+  "trained_on": "CoughMamba/coughvid (10,833 samples: healthy/symptomatic/COVID-19) - random init, no training",
+  "disclaimer": "NOT clinically validated for TB screening. Demo artifacts with random weights for pipeline verification.",
+  "metrics": {
+    "accuracy": null,
+    "sensitivity": null,
+    "specificity": null,
+    "auc": null,
+    "ci_95": null
+  },
+  "thresholds": {
+    "A": 0.7,
+    "B": 0.4
+  },
+  "calibration_temperature": 1.0,
+  "n_participants_train": 0,
+  "n_participants_test": 0,
+  "participant_leak_test": false
+}

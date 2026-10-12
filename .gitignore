@@ -1,0 +1,59 @@
+# Data and audio (never commit)
+ml/data/
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.npy
+*.npz
+!ml/artifacts/head.npz
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+dist/
+build/
+*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Vercel
+.vercel
+
+# Docker
+.docker/
+
+# Artifacts (model files - confirm before commit)
+ml/artifacts/backbone.onnx
+ml/artifacts/model_card.json

@@ -1,0 +1,8 @@
+flask==3.0.3
+gunicorn==22.0.0
+numpy==1.26.4
+scipy==1.13.0
+flask==3.0.3
+flask-cors==4.0.1
+pytest==8.3.3
+pytest-cov==5.0.0

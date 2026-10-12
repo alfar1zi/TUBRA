@@ -1,0 +1,7 @@
+sample_rate: 16000
+n_fft: 400
+hop_length: 160
+n_mels: 64
+f_min: 50
+f_max: 8000
+duration: 5.0
