@@ -1,4 +1,10 @@
+<div align="center">
+
+<img src="assets/tubra-logo.png" alt="Logo TUBRA" width="320">
+
 # TUBRA
+
+</div>
 
 Aplikasi web skrining batuk untuk pemeriksaan dahak TBC. Pengguna menjawab gejala, merekam 5 batuk di browser, lalu mendapat tier saran (A, B, C) tentang kapan periksa dahak.
 
@@ -6,15 +12,15 @@ Aplikasi web skrining batuk untuk pemeriksaan dahak TBC. Pengguna menjawab gejal
 
 ## Fitur
 
-- **Alur lengkap**: splash → beranda → persetujuan → 9 pertanyaan skrining → rekam 5 batuk → cek kualitas → analisis → hasil tier → alasan → langkah berikutnya → cara kerja → privasi
+- **Alur lengkap**: dari splash, beranda, persetujuan, 9 pertanyaan skrining, rekam 5 batuk, cek kualitas, analisis, hasil tier, alasan, langkah berikutnya, cara kerja, sampai privasi
 - **Privasi**: Tidak ada data audio/jawaban disimpan di server. Audio diproses sekali lalu dibuang. Tidak ada cookie, localStorage, analytics pihak ketiga.
 - **Model card driven**: Semua metrik di UI dibaca dari `model_card.json`. Nilai `null` tampil "Belum dievaluasi".
 - **Mode Demo**: `?demo=1` + `DEMO_ENABLED=true` menampilkan panel teknis untuk juri.
 
 ## Stack
 
-- **Frontend**: React + TypeScript + Vite + Tailwind → static di Vercel
-- **Backend**: Flask + gunicorn + ONNX Runtime + NumPy/SciPy → Cloud Run / lokal
+- **Frontend**: React + TypeScript + Vite + Tailwind, di-deploy static ke Vercel
+- **Backend**: Flask + gunicorn + ONNX Runtime + NumPy/SciPy, jalan di Cloud Run atau lokal
 - **ML**: PyTorch (offline, hanya di `ml/`)
 
 ## Quick Start (Lokal)
@@ -115,7 +121,7 @@ dan `backbone.onnx.data`. Bobot penuh (`backbone.onnx`), model klinis
 | Berkas | Isi |
 | --- | --- |
 | `backbone.onnx` (+ `.data`) | Residual-spectrogram CNN audio branch, output 2 logits `(B, 1, 64, 64)` |
-| `head.npz` | Kepala klasifikasi (identitas 2×2 untuk branch ini) |
+| `head.npz` | Kepala klasifikasi (identitas 2x2 untuk branch ini) |
 | `clinical_model.joblib` | Logistic regression terkalibrasi atas 26 fitur klinis |
 | `supervisor_model.joblib` | Fusion terkalibrasi atas `[p_audio, p_clinical, 26 fitur]` |
 | `clinical_preprocessor.joblib` | Imputer + scaler (paritas latih/serving) |
@@ -132,7 +138,7 @@ dan `backbone.onnx.data`. Bobot penuh (`backbone.onnx`), model klinis
 
 | Metrik | Nilai | Sumber |
 | --- | --- | --- |
-| AUROC fusion (out-of-fold) | **0.8345** (CI 95%: 0.8113–0.8580) | `cv_results.fusion` |
+| AUROC fusion (out-of-fold) | **0.8345** (CI 95%: 0.8113 sampai 0.8580) | `cv_results.fusion` |
 | AUROC audio-only | 0.6675 | `cv_results.audio_only` |
 | AUROC clinical-only | 0.8235 | `cv_results.clinical_only` |
 | pAUC@90% Sens | 0.33 | `model_card.metrics.pauc_90` |
@@ -140,7 +146,7 @@ dan `backbone.onnx.data`. Bobot penuh (`backbone.onnx`), model klinis
 | Spesifisitas @ Tier A | 0.9004 | `model_card.metrics.spec_at_A` |
 | ECE | 0.0352 | `model_card.metrics.ece` |
 | Threshold Tier A / B | 0.5552 / 0.1937 | `model_card.metrics.threshold_A/B` |
-| Paritas torch↔ONNX | max\|Δlogit\| = 1.8e-07 | `ml/tests/test_tta_parity.py` |
+| Paritas torch dan ONNX | max\|selisih logit\| = 1.8e-07 | `ml/tests/test_tta_parity.py` |
 
 > **Catatan kejujuran.** AUROC fusion (0.8345) hampir seluruhnya berasal dari
 > cabang klinis (0.8235); cabang audio hanya menyumbang ~0.011 AUROC. Ini hasil
