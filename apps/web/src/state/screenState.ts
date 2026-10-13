@@ -45,6 +45,8 @@ export interface RecordingData {
   clipping?: boolean;
   snrDb?: number;
   clippingRatio?: number;
+  /** Raw reason strings from the API's quality rejection, shown verbatim. */
+  qualityReasons?: string[];
 }
 
 export interface AnalysisResult {
@@ -111,6 +113,7 @@ export const initialContext: ScreenContext = {
     clipping: false,
     snrDb: undefined,
     clippingRatio: undefined,
+    qualityReasons: undefined,
   },
   analysisResult: null,
   demoMode: false,

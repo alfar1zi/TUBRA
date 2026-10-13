@@ -20,6 +20,7 @@ export default {
         "progress-track": palette.progressTrack,
         "progress-fill": palette.progressFill,
         success: colors.status.success,
+        "success-soft": palette.successSoft,
         warning: colors.status.warning,
         "warning-soft": palette.warningSoft,
         danger: colors.status.danger,

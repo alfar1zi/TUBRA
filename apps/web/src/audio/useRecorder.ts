@@ -8,6 +8,14 @@ interface AudioSettings {
   autoGainControl: boolean;
 }
 
+/**
+ * Hard stop for a take. The screen asks for five coughs, which at a natural
+ * pace take ten to fifteen seconds; the old 5 s cap ended the take before
+ * people finished coughing and left the server with almost nothing to detect.
+ * The API accepts up to 30 s of audio.
+ */
+export const MAX_RECORDING_SECONDS = 15;
+
 interface RecorderState {
   recording: boolean;
   duration: number;
@@ -55,6 +63,13 @@ export function useRecorder() {
   const startingRef = useRef<boolean>(false);
   /** Safety timer for the stop->flush->teardown handshake. */
   const flushTimerRef = useRef<number | null>(null);
+  /**
+   * Number of consecutive starts that delivered no audio at all, and the
+   * retry budget before the recorder reports an error envelope or an empty
+   * device really is what the user has.
+   */
+  const emptyStartCountRef = useRef<number>(0);
+  const MAX_EMPTY_STARTS = 2;
 
   const setOnComplete = useCallback((callback: ((blob: Blob) => void) | null) => {
     onCompleteRef.current = callback;
@@ -66,9 +81,12 @@ export function useRecorder() {
     // value and keep rescheduling after the recording stopped.
     if (recordingRef.current) {
       const elapsed = (Date.now() - startTimeRef.current) / 1000;
-      setState((s) => ({ ...s, duration: Math.min(elapsed, 5) }));
-      if (elapsed < 5) {
+      setState((s) => ({ ...s, duration: Math.min(elapsed, MAX_RECORDING_SECONDS) }));
+      if (elapsed < MAX_RECORDING_SECONDS) {
         animationFrameRef.current = requestAnimationFrame(updateDuration);
+      } else {
+        // The worklet flushes and fires onComplete, which ends the take.
+        stopRecordingRef.current?.();
       }
     }
   }, []);
@@ -281,6 +299,18 @@ export function useRecorder() {
             audioBlob: blob,
             audioBuffer: float32Array,
           }));
+          // A flush also arrives when React unmounts the screen (StrictMode
+          // re-mounts every effect once in the deployed build too): the
+          // cleanup posts "stop" and the worklet replays whatever it has,
+          // often a single render quantum. Forwarding that as a finished
+          // take sent users straight to the quality screen with a ~10 ms
+          // "recording", which the API then rejected as inaudible. Only
+          // deliver a flush for a take that is still live and not superseded.
+          if (!recordingRef.current || isStale()) {
+            teardown();
+            return;
+          }
+          emptyStartCountRef.current = 0;
           onCompleteRef.current?.(blob);
           // The flush handshake is done: release the graph now (this also
           // clears the stopRecording safety timer).
@@ -293,13 +323,19 @@ export function useRecorder() {
       animationFrameRef.current = requestAnimationFrame(updateDuration);
 
       // Watchdog: a running graph streams a buffer every ~100ms. If nothing
-      // arrives, the context stayed suspended (autoplay policy) and we would
-      // otherwise sit in a fake "recording" state that captures the mic but
-      // delivers no audio. Surface it as an error the UI can act on instead.
+      // arrives the graph observed is not delivering audio: the context is
+      // suspended (autoplay policy), or the worklet's input has no channels
+      // (a device that publishes an empty capture, such as a virtual or fake
+      // mic). Without this the screen claims to be calibrating forever. The
+      // retry budget keeps a genuinely recoverable device alive while making
+      // sure an empty one surfaces a clear error instead of an endless loop
+      // of silent restarts.
       noAudioTimerRef.current = window.setTimeout(() => {
-        if (recordingRef.current && !streamedRef.current) {
-          stopRecordingRef.current?.();
-          setState((s) => ({ ...s, error: "audio_context", recording: false }));
+        if (!recordingRef.current || streamedRef.current) return;
+        stopRecordingRef.current?.();
+        emptyStartCountRef.current += 1;
+        if (emptyStartCountRef.current >= MAX_EMPTY_STARTS) {
+          setState((s) => ({ ...s, error: "no_audio", recording: false }));
         }
       }, 1500);
 
@@ -312,6 +348,7 @@ export function useRecorder() {
       // Map the raw DOM/engine message to a stable machine-readable code; the
       // UI (S4/S5 copy) decides how to phrase it, we do not surface engine text.
       const errorMsg = toRecorderErrorCode(err);
+      teardown();
       setState((s) => ({ ...s, error: errorMsg, recording: false }));
     }
   }, [teardown, updateDuration]);
@@ -370,7 +407,8 @@ function writeString(view: DataView, offset: number, str: string) {
 export type RecorderErrorCode =
   | "mic_permission"
   | "mic_not_found"
-  | "audio_context";
+  | "audio_context"
+  | "no_audio";
 
 /**
  * Maps a thrown error to a stable code so the UI can show a localised, curated

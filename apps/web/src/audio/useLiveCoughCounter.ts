@@ -222,7 +222,6 @@ export function useLiveCoughCounter(
   const [calibrationPhase, setCalibrationPhase] = useState<CalibrationPhase>("calibrating");
   const [calibrationProgress, setCalibrationProgress] = useState(0);
 
-  const processedLengthRef = useRef(0);
   const inCoughRef = useRef(false);
   const coughStartFrameRef = useRef(0);
   const frameIndexRef = useRef(0);
@@ -239,6 +238,9 @@ export function useLiveCoughCounter(
    *  `allEnergyRef` so the stage-2 gate can score any candidate span. */
   const allCentroidRef = useRef<number[]>([]);
   const allZcrRef = useRef<number[]>([]);
+
+  /** Samples already scored, so a resent take is not scored twice. */
+  const processedLengthRef = useRef<number>(0);
 
   const processFrames = useCallback(() => {
     if (!audioData || audioData.length === 0) return;
@@ -265,6 +267,13 @@ export function useLiveCoughCounter(
     // Keep ~2.5s of history for the rolling noise floor.
     const floorWindowFrames = Math.ceil(2.5 * (sr / hl));
 
+    // The worklet resends the whole take on every stream, so only score what
+    // follows the frames already scored here. Tracked locally rather than
+    // taken from the message offset: React batches renders, and a newer
+    // snapshot can replace an unseen one, which would otherwise skip the
+    // frames in between. If the buffer restarts (a new take) start over.
+    if (audioData.length < processedLengthRef.current) processedLengthRef.current = 0;
+    if (audioData.length <= processedLengthRef.current + hl) return;
     const newFrames = Math.floor((audioData.length - processedLengthRef.current) / hl);
     if (newFrames <= 0) return;
 
@@ -286,6 +295,7 @@ export function useLiveCoughCounter(
     if (newEnergyDb.length === 0) return;
 
     processedLengthRef.current += newEnergyDb.length * hl;
+
     allEnergyRef.current.push(...newEnergyDb);
     if (useSpectralGate) {
       allCentroidRef.current.push(...newCentroid);
