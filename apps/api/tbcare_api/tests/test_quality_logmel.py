@@ -28,12 +28,26 @@ def make_wav_bytes(audio_float: np.ndarray, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
-def make_cough_audio(duration_s: float = 3.0, sample_rate: int = 16000) -> np.ndarray:
-    """Generate synthetic cough-like audio."""
+def make_cough_audio(
+    duration_s: float = 3.0, sample_rate: int = 16000, seed: int = 0
+) -> np.ndarray:
+    """Generate synthetic cough-like audio (band-limited bursts).
+
+    Band-limited so the spectral gate treats them as coughs; a raw
+    white-noise burst has ZCR ~0.5 and would be rejected.
+    """
+    from scipy import signal as _signal
+
+    rng = np.random.default_rng(seed)
     n = int(duration_s * sample_rate)
-    t = np.arange(n) / sample_rate
     # Background noise
-    audio = np.random.normal(0, 0.01, n).astype(np.float32)
+    audio = rng.normal(0, 0.01, n).astype(np.float32)
+    band = _signal.butter(
+        4,
+        [200 / (sample_rate / 2), 4000 / (sample_rate / 2)],
+        btype="band",
+        output="sos",
+    )
     # Add 3 cough events (adjusted for duration)
     cough_times = [(0.5, 0.8), (1.2, 1.5), (2.0, 2.3)]
     for start, end in cough_times:
@@ -43,10 +57,12 @@ def make_cough_audio(duration_s: float = 3.0, sample_rate: int = 16000) -> np.nd
         e = min(int(end * sample_rate), n)
         if s >= e:
             continue
-        cough_t = t[s:e]
-        envelope = np.exp(-8 * (cough_t - cough_t[0]))
-        burst = np.random.normal(0, 0.4, len(cough_t)) * envelope
-        audio[s:e] += burst.astype(np.float32)
+        length = e - s
+        burst = rng.normal(0, 0.4, length).astype(np.float32)
+        burst = _signal.sosfilt(band, burst).astype(np.float32)
+        peak = np.max(np.abs(burst)) + 1e-12
+        burst = burst / peak * np.hanning(length)
+        audio[s:e] += (burst * 0.6).astype(np.float32)
     # Normalize
     peak = np.max(np.abs(audio))
     if peak > 0:

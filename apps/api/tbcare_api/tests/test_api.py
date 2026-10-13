@@ -19,6 +19,12 @@ def test_health(client):
     data = resp.get_json()
     assert data["status"] == "ok"
     assert "model_version" in data
+    # Model status must be surfaced and must never claim availability without
+    # a VALIDATED manifest.
+    assert "model_status" in data
+    assert "available_for_inference" in data
+    if data["model_status"] != "validated":
+        assert data["available_for_inference"] is False
 
 
 def make_wav_bytes(duration_s: float = 1.0, sample_rate: int = 16000, freq: float = 440.0) -> bytes:
