@@ -27,7 +27,7 @@ Aplikasi web skrining batuk untuk pemeriksaan dahak TBC. Pengguna menjawab gejal
 
 ```bash
 # Prasyarat: Docker + Docker Compose
-cd tbcare
+cd TUBRA
 ./scripts/run_local.sh up
 
 # Web:  http://localhost:5173
@@ -98,7 +98,7 @@ VITE_API_BASE=https://<host-api-anda>
 ## Struktur Repo
 
 ```
-tbcare/
+TUBRA/
 ├── apps/
 │   ├── web/          # React + Vite + Tailwind (public/model_card.json untuk UI)
 │   └── api/          # Flask + ONNX Runtime
