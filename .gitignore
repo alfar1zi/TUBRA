@@ -57,3 +57,28 @@ coverage/
 # Artifacts (model files - confirm before commit)
 ml/artifacts/backbone.onnx
 ml/artifacts/model_card.json
+
+# Secrets / TLS material (never commit)
+*.key
+*.crt
+*.pem
+
+# Downloaded packages and tarballs
+*.whl
+*.tar.gz
+
+# Local virtualenvs
+.venv/
+venv/
+
+# Model/binary artifacts that should ship via the registry, not git
+*.joblib
+*.onnx.data
+# Note: apps/web/public/model_card.json is a committed, user-facing metrics
+# reference served by the web app; it is intentionally tracked, not ignored.
+
+# Ad-hoc local scratch
+loader_pick.csv
+manifest*.csv
+standalone_prepare.py
+test_prepare.py
