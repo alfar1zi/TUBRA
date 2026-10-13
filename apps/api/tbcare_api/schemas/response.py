@@ -11,6 +11,9 @@ class ScreenResponse:
     next_steps: List[str]
     metadata: dict
     gradcam_url: Optional[str] = None
+    tier_label: Optional[str] = None
+    actions: Optional[List[str]] = None
+    disclaimer: Optional[str] = None
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -18,28 +21,45 @@ class ScreenResponse:
 
 @dataclass(frozen=True)
 class ErrorResponse:
-    """Error response for POST /api/v1/screen."""
+    """Canonical error envelope for all JSON endpoints.
+
+    Shape (see docs/ARCHITECTURE.md 5.3):
+        {"error": {"code": str, "retryable": bool,
+                   "message": str, "details": dict|None}}
+    ``message`` is a short, non-sensitive human hint; machine consumers must
+    branch on ``code``, never on the message.
+    """
     error: str  # error code
     message: str
+    retryable: bool = False
     details: Optional[dict] = None
 
     def to_json(self) -> dict:
-        d = {"error": self.error, "message": self.message}
+        err = {
+            "code": self.error,
+            "retryable": self.retryable,
+            "message": self.message,
+        }
         if self.details:
-            d["details"] = self.details
-        return d
+            err["details"] = self.details
+        return {"error": err}
 
 
-# Error codes (matching ARCHITECTURE.md)
+# Error codes (see docs/ARCHITECTURE.md 5.3). `retryable` marks transient
+# failures the client may retry without changing its input.
 ERROR_CODES = {
     "invalid_audio": "Berkas audio tidak valid",
-    "invalid_payload": "Data gejala tidak valid",
+    "payload_invalid": "Data gejala tidak valid",
     "quality_failed": "Rekaman tidak memenuhi syarat kualitas",
+    "too_large": "Berkas terlalu besar",
+    "model_unavailable": "Model belum siap melayani permintaan",
     "inference_error": "Galat saat menjalankan model",
-    "explain_error": "Galat saat membuat penjelasan",
-    "timeout": "Waktu pemrosesan habis",
     "server_error": "Galat server",
+    "timeout": "Waktu pemrosesan habis",
 }
+
+# Codes whose failures are transient (retrying the same request may succeed).
+RETRYABLE_CODES = {"model_unavailable", "server_error", "timeout"}
 
 # Tier messages (from UI_SPEC.md)
 TIER_MESSAGES = {
@@ -66,7 +86,10 @@ NEXT_STEPS = [
 
 
 def create_tier_response(tier: str, gradcam_url: Optional[str] = None,
-                          metadata: Optional[dict] = None) -> ScreenResponse:
+                          metadata: Optional[dict] = None,
+                          actions: Optional[List[str]] = None,
+                          disclaimer: Optional[str] = None,
+                          tier_label: Optional[str] = None) -> ScreenResponse:
     """Create a ScreenResponse for a given tier."""
     msg = TIER_MESSAGES[tier]
     return ScreenResponse(
@@ -75,6 +98,9 @@ def create_tier_response(tier: str, gradcam_url: Optional[str] = None,
         next_steps=NEXT_STEPS,
         gradcam_url=gradcam_url,
         metadata=metadata or {},
+        tier_label=tier_label or msg["title"],
+        actions=actions,
+        disclaimer=disclaimer,
     )
 
 
@@ -83,5 +109,6 @@ def create_error_response(error_code: str, details: Optional[dict] = None) -> Er
     return ErrorResponse(
         error=error_code,
         message=ERROR_CODES.get(error_code, "Galat tidak dikenal"),
+        retryable=error_code in RETRYABLE_CODES,
         details=details,
     )
