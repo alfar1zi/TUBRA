@@ -6,7 +6,7 @@ Aplikasi web skrining batuk untuk pemeriksaan dahak TBC. Pengguna menjawab gejal
 
 ## Fitur
 
-- **S0–S12**: Alur lengkap dari splash → beranda → persetujuan → 9 pertanyaan → persiapan → rekam 5 batuk → cek kualitas → analisis → hasil → mengapa → langkah berikutnya → cara kerja & bukti → privasi
+- **Alur lengkap**: splash → beranda → persetujuan → 9 pertanyaan skrining → rekam 5 batuk → cek kualitas → analisis → hasil tier → alasan → langkah berikutnya → cara kerja → privasi
 - **Privasi**: Tidak ada data audio/jawaban disimpan di server. Audio diproses sekali lalu dibuang. Tidak ada cookie, localStorage, analytics pihak ketiga.
 - **Model card driven**: Semua metrik di UI dibaca dari `model_card.json`. Nilai `null` tampil "Belum dievaluasi".
 - **Mode Demo**: `?demo=1` + `DEMO_ENABLED=true` menampilkan panel teknis untuk juri.
@@ -61,7 +61,7 @@ python3 ml/scripts/verify_artifacts.py
 
 `pytest` dijalankan dari root (lihat `pytest.ini`) dan mencakup `ml/tests` serta
 `apps/api/tbcare_api/tests`. Runtime API tidak boleh mengimpor `torch`, `librosa`,
-atau `numba` (lihat `AGENTS.md` bagian 4.6).
+atau `numba`; dependensi itu hanya dipakai untuk pelatihan di `ml/`.
 
 ## Deploy
 
@@ -94,7 +94,7 @@ VITE_API_BASE=https://<host-api-anda>
 ```
 tbcare/
 ├── apps/
-│   ├── web/          # React + Vite + Tailwind
+│   ├── web/          # React + Vite + Tailwind (public/model_card.json untuk UI)
 │   └── api/          # Flask + ONNX Runtime
 ├── ml/               # PyTorch training (offline)
 │   ├── artifacts/    # backbone.onnx(.data), head.npz, model_card.json
@@ -107,7 +107,10 @@ tbcare/
 
 ## Artefak Model
 
-`ml/artifacts/` (tidak di-commit) dihasilkan oleh `ml/scripts/export_artifacts.py`:
+`ml/artifacts/` dihasilkan oleh `ml/scripts/export_artifacts.py`. Yang di-commit:
+`model_manifest.json`, `cv_results.json`, `subgroup_metrics.json`, `head.npz`,
+dan `backbone.onnx.data`. Bobot penuh (`backbone.onnx`), model klinis
+(`*.joblib`), dan prediksi (`oof_predictions.npz`) tidak di-commit.
 
 | Berkas | Isi |
 | --- | --- |
@@ -151,7 +154,7 @@ PYTHONPATH=.:apps/api python3 ml/scripts/export_artifacts.py \
   --config ml/configs/train.yaml \
   --coda-root ml/data/coda_tb \
   --tbscreen-root /path/to/TBscreen_Dataset \
-  --output ml/artifacts --epochs 4 --max-clips 5 --outer-folds 3
+  --output ml/artifacts --epochs 4 --max-clips 5 --outer-folds 5
 ```
 
 Verifikasi artefak: `python3 ml/scripts/verify_artifacts.py`.
@@ -171,10 +174,9 @@ metrik pada `model_card.json` berasal dari validasi silang out-of-fold, bukan uj
 `ml/tests/test_logmel_parity.py` membandingkan pipeline serving
 (`apps/api/tbcare_api/audio/logmel.py`) dengan training
 (`ml/src/features/audio.py::extract_logmel`, recipe `energy_v2`) pada sinyal
-sintetis yang sama. Keduanya kini memakai window energi + normalisasi `[0, 1]`
-dan resampler yang sama, sehingga `max|diff|` berada di bawah toleransi `1e-4`
-yang diwajibkan `AGENTS.md` bagian 4.5. Test ini wajib lulus sebelum artefak
-apa pun boleh diekspor.
+sintetis yang sama. Keduanya memakai window energi, normalisasi `[0, 1]`, dan
+resampler yang sama, sehingga `max|diff|` selalu di bawah toleransi `1e-4`.
+Test ini wajib lulus sebelum artefak apa pun diekspor.
 
 ## Lisensi
 
