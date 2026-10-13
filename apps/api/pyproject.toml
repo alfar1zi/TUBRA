@@ -5,11 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tbcare-api"
 version = "0.0.1"
+# NOTE: runtime deps mirror apps/api/requirements.txt, which is the source of
+# truth for the Docker image. Keep the two in sync; a divergence here means a
+# `pip install .` succeeds while the container later fails on a missing import.
 dependencies = [
     "flask==3.0.3",
+    "flask-cors==4.0.1",
     "gunicorn==22.0.0",
     "numpy==1.26.4",
-    "flask-cors==4.0.1",
+    "scipy==1.13.0",
+    "onnxruntime==1.19.2",
+    "scikit-learn==1.5.2",
+    "joblib==1.4.2",
 ]
 
 [project.optional-dependencies]

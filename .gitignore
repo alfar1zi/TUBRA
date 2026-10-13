@@ -54,6 +54,30 @@ coverage/
 # Docker
 .docker/
 
-# Artifacts (model files - confirm before commit)
-ml/artifacts/backbone.onnx
-ml/artifacts/model_card.json
+# Artifacts: the API image bundles these so a plain `docker run` works.
+# committed on purpose (small: backbone.onnx ~0.4MB, joblib a few KB each)
+
+# Secrets / TLS material (never commit)
+*.key
+*.crt
+*.pem
+
+# Downloaded packages and tarballs
+*.whl
+*.tar.gz
+
+# Local virtualenvs
+.venv/
+venv/
+
+# Large onnx weights: shipped via the registry, not git (backbone.onnx.data
+# is already tracked from the first commit)
+*.onnx.data
+# Note: apps/web/public/model_card.json is a committed, user-facing metrics
+# reference served by the web app; it is intentionally tracked, not ignored.
+
+# Ad-hoc local scratch
+loader_pick.csv
+manifest*.csv
+standalone_prepare.py
+test_prepare.py

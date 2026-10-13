@@ -1,0 +1,99 @@
+{
+  "model_version": "tbcare-ensemble-0.2",
+  "trained_on": "CODA TB (India, Madagascar, Philippines, South Africa, Tanzania, Uganda, Vietnam) + TBscreen/Nairobi; 1163 participants",
+  "disclaimer": "Research prototype. NOT a diagnostic device. Metrics are cross-validated (out-of-fold) and thresholds are derived from them.",
+  "metrics": {
+    "roc_auc": 0.8345,
+    "pauc_90": 0.33,
+    "sens_at_A": 0.4865,
+    "spec_at_A": 0.9004,
+    "ece": 0.0352,
+    "threshold_A": 0.5552,
+    "threshold_B": 0.1937,
+    "auc": 0.8345,
+    "ci_95": [
+      0.8113,
+      0.858
+    ],
+    "sensitivity": 0.4865,
+    "specificity": 0.9004,
+    "accuracy": 0.7687,
+    "audio_only_auc": 0.6675,
+    "clinical_only_auc": 0.8235
+  },
+  "thresholds": {
+    "A": 0.5552,
+    "B": 0.1937
+  },
+  "tier_thresholds": {
+    "A": 0.5552,
+    "B": 0.1937,
+    "C": 0.0
+  },
+  "ablation": {
+    "audio_only": 0.6675,
+    "symptoms_only": 0.8235,
+    "fusion": 0.8345
+  },
+  "calibration_temperature": 1.0,
+  "n_participants_train": 1163,
+  "n_participants_test": 1163,
+  "participant_leak_test": true,
+  "subgroup_metrics": {
+    "IN": {
+      "n": 115,
+      "n_positive": 12,
+      "n_negative": 103,
+      "auroc": 0.8487
+    },
+    "KE": {
+      "n": 123,
+      "n_positive": 87,
+      "n_negative": 36,
+      "auroc": 0.6957
+    },
+    "MG": {
+      "n": 150,
+      "n_positive": 73,
+      "n_negative": 77,
+      "auroc": 0.7915
+    },
+    "PH": {
+      "n": 190,
+      "n_positive": 19,
+      "n_negative": 171,
+      "auroc": 0.6864
+    },
+    "SA": {
+      "n": 126,
+      "n_positive": 25,
+      "n_negative": 101,
+      "auroc": 0.7457
+    },
+    "TZ": {
+      "n": 79,
+      "n_positive": 13,
+      "n_negative": 66,
+      "auroc": 0.7389
+    },
+    "UG": {
+      "n": 228,
+      "n_positive": 77,
+      "n_negative": 151,
+      "auroc": 0.7981
+    },
+    "VN": {
+      "n": 152,
+      "n_positive": 64,
+      "n_negative": 88,
+      "auroc": 0.7649
+    }
+  },
+  "limitations": [
+    "Tidak ada data Indonesia",
+    "Populasi: dewasa dengan batuk 2 minggu atau lebih",
+    "Bukan alat diagnosis",
+    "AUROC per negara tersedia di subgroup_metrics (bisa rendah di lokasi tertentu)"
+  ],
+  "generated_at": "2026-10-15T12:10:40.128241+00:00"
+}
