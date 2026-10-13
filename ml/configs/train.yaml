@@ -1,0 +1,37 @@
+training:
+  coda_root: ml/data/coda_tb
+  tbscreen_root: /home/farizi/tbscreen_probe/tbscreen/TBscreen_Dataset
+  output_dir: ml/artifacts
+  audio_recipe: energy_v2
+  n_mels: 64
+  target_frames: 64
+  max_clips: 5
+  outer_folds: 5
+  inner_folds: 3
+  random_seed: 42
+  epochs: 16
+  batch_size: 16
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 10
+  min_delta: 0.001
+  base_channels: 32
+  audio_embedding_dim: 128
+  clinical_hidden_dims: [128, 64]
+  clinical_embedding_dim: 32
+  fused_dim: 128
+  dropout: 0.3
+  use_spec_augment: true
+  time_mask_param: 8
+  freq_mask_param: 8
+  # Research-backed, near-free robustness, measured on OOF (see
+  # docs/proposal/training_improvement.md). snapshot_topk averages the top-k
+  # best-epoch weights (SWA-style) into ONE model, so serving cost is unchanged.
+  label_smoothing: 0.05
+  snapshot_topk: 5
+  # Seed-ensemble: >1 trains N independent models (seeds = random_seed..+N-1)
+  # and averages probabilities. Serving mirrors this by averaging the exported
+  # backbone_seed*.onnx logits. Cost scales linearly with N.
+  ensemble_seeds: 1
+  n_bootstrap: 1000
+  ci_level: 0.95
