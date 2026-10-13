@@ -27,13 +27,79 @@ def rms_energy_frames(audio: np.ndarray, frame_length: int, hop_length: int) -> 
     return energies
 
 
+def spectral_frame_features(
+    audio: np.ndarray,
+    frame_length: int,
+    hop_length: int,
+    sample_rate: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-frame spectral features used to tell a cough apart from noise.
+
+    A cough is a broadband, sharp, high-frequency burst. Phone-microphone
+    noise, music and sustained tones are either narrowband or low-frequency,
+    so an energy-only gate counts them as coughs. These three features
+    separate them:
+
+    - ``centroid_hz``: spectral centroid (Hz). Cough energy sits high
+      (a few kHz); hums/thuds sit low.
+    - ``flatness``: geometric/arithmetic mean of the power spectrum in
+      [0, 1]. Near 1 for broadband noise (cough), near 0 for tones/music.
+    - ``zcr``: zero-crossing rate in [0, 1]; high for broadband bursts.
+
+    Returns three arrays aligned with :func:`rms_energy_frames`.
+    """
+    win = np.hanning(frame_length).astype(np.float32)
+    n_frames = 1 + (len(audio) - frame_length) // hop_length
+    if n_frames <= 0:
+        empty = np.array([], dtype=np.float32)
+        return empty, empty, empty
+
+    freqs = np.fft.rfftfreq(frame_length, 1.0 / sample_rate)
+    centroid = np.zeros(n_frames, dtype=np.float32)
+    flatness = np.zeros(n_frames, dtype=np.float32)
+    zcr = np.zeros(n_frames, dtype=np.float32)
+
+    for i in range(n_frames):
+        start = i * hop_length
+        frame = audio[start:start + frame_length]
+        if len(frame) < frame_length:
+            frame = np.pad(frame, (0, frame_length - len(frame)))
+        windowed = frame * win
+        power = np.abs(np.fft.rfft(windowed)) ** 2 + 1e-12
+        total = float(np.sum(power))
+        if total <= 0:
+            continue
+        prob = power / total
+        centroid[i] = float(np.sum(freqs * prob))
+        flatness[i] = float(np.exp(np.mean(np.log(power))) / np.mean(power))
+        zcr[i] = float(np.mean(np.abs(np.diff(np.sign(windowed)))) / 2.0)
+
+    return centroid, flatness, zcr
+
+
+def _segment_mean(values: np.ndarray, start_frame: int, end_frame: int) -> float:
+    """Mean of a per-frame feature over a cough candidate's frame span."""
+    if len(values) == 0:
+        return 0.0
+    lo = min(max(start_frame, 0), len(values) - 1)
+    hi = min(max(end_frame, lo + 1), len(values))
+    return float(np.mean(values[lo:hi]))
+
+
 def detect_cough_events(
     audio: np.ndarray,
     sample_rate: int,
     config=None,
 ) -> tuple[list[tuple[float, float]], np.ndarray, float]:
     """
-    Detect cough events using energy-based VAD with hysteresis.
+
+    Stage 1 (energy): candidate bursts that rise above the noise floor.
+    Stage 2 (spectral): keep only candidates whose spectrum looks like a
+    cough (broadband, high centroid, high ZCR). Music, tones, speech and
+    low-frequency thuds are rejected here even when they are loud.
+
+    Set ``config.use_spectral_gate = False`` to fall back to energy-only.
+
     Args:
         audio: 1D float32 array, normalized to [-1, 1]
         sample_rate: sample rate in Hz
@@ -62,7 +128,7 @@ def detect_cough_events(
     min_frames = int(config.min_cough_duration_s * sample_rate / hop_length)
     max_frames = int(config.max_cough_duration_s * sample_rate / hop_length)
 
-    events = []
+    candidates = []
     in_cough = False
     start_frame = 0
 
@@ -75,7 +141,7 @@ def detect_cough_events(
             if min_frames <= duration_frames <= max_frames:
                 start_time = start_frame * hop_length / sample_rate
                 end_time = i * hop_length / sample_rate
-                events.append((start_time, end_time))
+                candidates.append((start_frame, i, start_time, end_time))
             in_cough = False
 
     if in_cough:
@@ -83,6 +149,28 @@ def detect_cough_events(
         if min_frames <= duration_frames <= max_frames:
             start_time = start_frame * hop_length / sample_rate
             end_time = len(audio) / sample_rate
+            candidates.append((start_frame, len(energy_db), start_time, end_time))
+
+    if not getattr(config, "use_spectral_gate", True) or not candidates:
+        return (
+            [(s, e) for _, _, s, e in candidates],
+            energy_db,
+            noise_floor_db,
+        )
+
+    centroid, flatness, zcr = spectral_frame_features(
+        audio, frame_length, hop_length, sample_rate
+    )
+    events = []
+    for cand_start, cand_end, start_time, end_time in candidates:
+        mean_centroid = _segment_mean(centroid, cand_start, cand_end)
+        mean_zcr = _segment_mean(zcr, cand_start, cand_end)
+        if (
+            mean_centroid >= config.min_spectral_centroid_hz
+            and config.min_zero_crossing_rate
+            <= mean_zcr
+            <= config.max_zero_crossing_rate
+        ):
             events.append((start_time, end_time))
 
     return events, energy_db, noise_floor_db
