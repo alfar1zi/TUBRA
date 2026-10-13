@@ -15,15 +15,30 @@ def make_cough_signal(
     sample_rate: int = 16000,
     cough_times: list[tuple[float, float]] | None = None,
     noise_level: float = 0.01,
+    seed: int = 0,
 ) -> np.ndarray:
-    """Generate synthetic audio with cough-like events."""
+    """Generate synthetic audio with cough-like events.
+
+    Coughs are modelled as band-limited (200-4000 Hz) noise bursts so their
+    spectral centroid and zero-crossing rate resemble real recordings. A
+    plain white-noise burst has ZCR ~0.5 and is (correctly) rejected by the
+    spectral gate in ``detect_cough_events``.
+    """
+    from scipy import signal as _signal
+
+    rng = np.random.default_rng(seed)
     n = int(duration_s * sample_rate)
-    t = np.arange(n) / sample_rate
-    signal = np.random.normal(0, noise_level, n).astype(np.float32)
+    signal = rng.normal(0, noise_level, n).astype(np.float32)
 
     if cough_times is None:
         cough_times = [(0.5, 0.8), (2.0, 2.3), (4.0, 4.3)]
 
+    band = _signal.butter(
+        4,
+        [200 / (sample_rate / 2), 4000 / (sample_rate / 2)],
+        btype="band",
+        output="sos",
+    )
     for start, end in cough_times:
         s = int(start * sample_rate)
         e = int(end * sample_rate)
@@ -31,11 +46,12 @@ def make_cough_signal(
             e = n
         if s >= e:
             continue
-        cough_t = t[s:e]
-        # Cough-like: burst of noise with envelope
-        envelope = np.exp(-5 * (cough_t - cough_t[0]))
-        burst = np.random.normal(0, 0.5, len(cough_t)) * envelope
-        signal[s:e] += burst.astype(np.float32)
+        length = e - s
+        burst = rng.normal(0, 0.5, length).astype(np.float32)
+        burst = _signal.sosfilt(band, burst).astype(np.float32)
+        peak = np.max(np.abs(burst)) + 1e-12
+        burst = burst / peak * np.hanning(length)
+        signal[s:e] += (burst * 0.8).astype(np.float32)
 
     # Normalize to [-1, 1]
     peak = np.max(np.abs(signal))
@@ -71,6 +87,93 @@ def test_detect_cough_events_pure_noise():
     events, energy_db, noise_floor = detect_cough_events(audio, 16000, config)
 
     assert len(events) == 0
+
+def _noisy(signal: np.ndarray, level: float = 0.01, seed: int = 1) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    return (signal + rng.normal(0, level, len(signal))).astype(np.float32)
+
+
+def test_spectral_gate_rejects_pure_tone():
+    """A sustained high tone is loud but is not a cough."""
+    config = AudioConfig(sample_rate=16000)
+    sr = 16000
+    t = np.arange(sr * 4) / sr
+    tone = (0.4 * np.sin(2 * np.pi * 2500 * t)).astype(np.float32)
+    events, _, _ = detect_cough_events(_noisy(tone), sr, config)
+    assert events == []
+
+
+def test_spectral_gate_rejects_music_and_speech():
+    """Harmonic music/speech is low-ZCR-ish and must not count as coughs."""
+    config = AudioConfig(sample_rate=16000)
+    sr = 16000
+    t = np.arange(sr * 4) / sr
+    music = sum(
+        (0.2 * np.sin(2 * np.pi * f * t) for f in (110, 220, 440, 880, 1760, 3520))
+    ).astype(np.float32)
+    speech = sum(
+        (0.2 * np.sin(2 * np.pi * f * t) for f in (300, 900, 1800, 2600))
+    ).astype(np.float32)
+    assert detect_cough_events(_noisy(music), sr, config)[0] == []
+    assert detect_cough_events(_noisy(speech), sr, config)[0] == []
+
+
+def test_spectral_gate_rejects_low_frequency_thud():
+    """A muffled door-slam (heavily low-passed) is not a cough."""
+    from scipy import signal as _signal
+
+    config = AudioConfig(sample_rate=16000)
+    sr = 16000
+    rng = np.random.default_rng(2)
+    audio = rng.normal(0, 0.01, sr * 4).astype(np.float32)
+    length = int(0.4 * sr)
+    thud = rng.normal(0, 0.9, length)
+    thud = _signal.sosfilt(
+        _signal.butter(4, 120 / (sr / 2), btype="low", output="sos"), thud
+    )
+    # Smooth envelope (no click edge) so the thud is purely low-frequency.
+    env = np.hanning(length) ** 2
+    thud = thud / (np.max(np.abs(thud)) + 1e-12) * env
+    audio[sr: sr + length] += thud.astype(np.float32)
+    assert detect_cough_events(audio, sr, config)[0] == []
+
+
+def test_spectral_gate_keeps_realistic_coughs():
+    """Band-limited cough bursts survive the gate, even with ambient noise."""
+    from scipy import signal as _signal
+
+    config = AudioConfig(sample_rate=16000)
+    sr = 16000
+    rng = np.random.default_rng(3)
+    audio = rng.normal(0, 0.05, sr * 6).astype(np.float32)
+    band = _signal.butter(
+        4, [200 / (sr / 2), 4000 / (sr / 2)], btype="band", output="sos"
+    )
+    length = int(0.3 * sr)
+    for start_s in (1, 2, 3, 4):
+        burst = rng.normal(0, 0.5, length)
+        burst = _signal.sosfilt(band, burst)
+        burst = burst / (np.max(np.abs(burst)) + 1e-12) * np.hanning(length)
+        s = int(start_s * sr)
+        audio[s:s + length] += (burst * 0.8).astype(np.float32)
+    events, _, _ = detect_cough_events(audio, sr, config)
+    assert len(events) >= 3
+
+
+def test_spectral_gate_can_be_disabled():
+    """With the gate off, energy-only detection accepts a loud mid tone."""
+    config = AudioConfig(sample_rate=16000, use_spectral_gate=False)
+    sr = 16000
+    rng = np.random.default_rng(4)
+    audio = rng.normal(0, 0.005, sr * 4).astype(np.float32)
+    buf = np.arange(int(0.3 * sr)) / sr
+    burst = (0.5 * np.sin(2 * np.pi * 1500 * buf) * np.hanning(len(buf))).astype(
+        np.float32
+    )
+    for start_s in (1.0, 2.0):
+        s = int(start_s * sr)
+        audio[s: s + len(burst)] += burst
+    assert len(detect_cough_events(audio, sr, config)[0]) >= 1
 
 
 def test_detect_cough_events_clipped_signal():

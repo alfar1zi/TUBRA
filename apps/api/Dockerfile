@@ -20,10 +20,13 @@ FROM base AS runtime
 COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
 
-COPY ml/artifacts/backbone.onnx ml/artifacts/head.npz ml/artifacts/model_card.json ./ml/artifacts/
+# Every file create_ensemble_from_artifacts() needs must be present in the
+# image; relying on the compose bind-mount made a plain `docker run` fail with
+# FileNotFoundError on the joblib/manifest files.
+COPY ml/artifacts/ ./ml/artifacts/
 COPY apps/api/tbcare_api ./tbcare_api
 
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "60", "tbcare_api.app:create_app()"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--preload", "--timeout", "60", "tbcare_api.app:create_app()"]
