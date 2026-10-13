@@ -1,3 +1,13 @@
+// Base URL of the API service. Empty by default, so requests stay relative
+// ("/api/...") and hit the Vite dev proxy locally. When the web app is deployed
+// on its own (for example Vercel) with the API hosted elsewhere, set
+// VITE_API_BASE to the backend origin, e.g. https://tbcare-api.example.com.
+const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
+
+function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
 export interface EchoTestResponse {
   sample_rate: number;
   duration_s: number;
@@ -91,7 +101,7 @@ export async function postEchoTest(audioBlob: Blob): Promise<EchoTestResponse> {
   const formData = new FormData();
   formData.append("audio", audioBlob, "recording.wav");
 
-  const response = await fetch("/api/v1/echo-test", {
+  const response = await fetch(apiUrl("/api/v1/echo-test"), {
     method: "POST",
     body: formData,
   });
@@ -113,7 +123,7 @@ export async function postScreen(
   formData.append("audio", audioBlob, "recording.wav");
   formData.append("payload", JSON.stringify(payload));
 
-  const response = await fetch("/api/v1/screen", {
+  const response = await fetch(apiUrl("/api/v1/screen"), {
     method: "POST",
     body: formData,
     signal,
@@ -128,6 +138,6 @@ export async function postScreen(
 }
 
 export async function getHealth(): Promise<{ status: string; model_version: string }> {
-  const response = await fetch("/api/v1/health");
+  const response = await fetch(apiUrl("/api/v1/health"));
   return response.json();
 }
