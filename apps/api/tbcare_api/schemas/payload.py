@@ -67,49 +67,34 @@ class ScreenPayload:
             smoking=smoking,
         )
 
-    def to_symptom_vector(self) -> tuple[list[float], list[int]]:
-        """
-        Convert to model input format.
-        Returns: (symptom_values, availability_mask)
-        Order: hemoptysis, fever, night_sweats, weight_loss, prior_tb,
-               smoking_never, smoking_former, smoking_current, age_normalized
-        """
-        # Boolean symptoms: 1.0 = yes, 0.0 = no, 0.5 = unknown (availability=0)
-        symptoms = []
-        availability = []
+    def to_clinical_record(self) -> dict:
+        """Map the 9 UI fields onto the CODA TB clinical feature record.
 
-        bool_fields = [
-            self.hemoptysis,
-            self.fever,
-            self.night_sweats,
-            self.weight_loss,
-            self.prior_tb,
-        ]
-        for v in bool_fields:
-            if v is None:
-                symptoms.append(0.5)
-                availability.append(0)
-            else:
-                symptoms.append(1.0 if v else 0.0)
-                availability.append(1)
-
-        # Smoking: one-hot (3 dims)
-        smoking_map = {"never": 0, "former": 1, "current": 2}
-        if self.smoking is None:
-            symptoms.extend([1/3, 1/3, 1/3])
-            availability.extend([0, 0, 0])
+        The record is consumed by `tbcare_api.inference.ensemble.ServingPreprocessor`,
+        which mirrors `ml.src.features.clinical.ClinicalPreprocessor._extract_features`.
+        Fields TBCare does not collect (height, weight, vitals, HIV, country) are left
+        absent so the preprocessor imputes them with training-set medians / modes.
+        Unknown booleans stay None so "don't know" is imputed, never guessed as "no".
+        """
+        smoking_yes: Optional[bool]
+        if self.smoking in ("former", "current"):
+            smoking_yes = True
+        elif self.smoking == "never":
+            smoking_yes = False
         else:
-            onehot = [0.0, 0.0, 0.0]
-            onehot[smoking_map[self.smoking]] = 1.0
-            symptoms.extend(onehot)
-            availability.extend([1, 1, 1])
+            smoking_yes = None
 
-        # Age normalized: (age - 18) / (100 - 18) -> [0, 1]
-        age_norm = (self.age - 18) / 82.0
-        symptoms.append(age_norm)
-        availability.append(1)
-
-        return symptoms, availability
+        return {
+            "sex": self.sex,
+            "age": self.age,
+            "reported_cough_dur": self.to_cough_duration_value(),
+            "hemoptysis": self.hemoptysis,
+            "fever": self.fever,
+            "night_sweats": self.night_sweats,
+            "weight_loss": self.weight_loss,
+            "tb_prior": self.prior_tb,
+            "smoke_lweek": smoking_yes,
+        }
 
     def to_cough_duration_value(self) -> float:
         """Map cough_duration to numeric value for model (midpoint in weeks)."""
