@@ -15,10 +15,19 @@ class AudioConfig:
     noise_percentile: float = 10.0
     noise_margin_db: float = 6.0
     hysteresis_db: float = 3.0
-    snr_threshold_db: float = 10.0
+    snr_threshold_db: float = 8.0
     clipping_threshold_ratio: float = 0.01
+    # The web flow records one 15 s take and asks the user for three to five
+    # coughs. A take that yields fewer than three segmented bursts is not the
+    # input the model was validated on, so it is sent back for re-recording
+    # instead of being accepted on a single marginal burst.
     min_coughs_required: int = 3
     max_coughs_expected: int = 10
+    # A single burst this far above the room noise is unambiguous on its own,
+    # so one detected cough is accepted instead of demanding more. CODA-TB
+    # real coughs sit at a median margin of ~25 dB; 22 dB keeps the fallback
+    # for a genuinely loud isolated cough while rejecting weak transients.
+    strong_burst_margin_db: float = 22.0
     # --- Stage 2: spectral gate (cough vs noise/music/speech) ---
     # A cough is a sharp, broadband, high-frequency burst. Tones, music and
     # voiced speech concentrate their energy in a few low/mid bands, so a

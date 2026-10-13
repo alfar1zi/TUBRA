@@ -331,6 +331,27 @@ class TestArtifactsPathResolution:
         finally:
             screen_route._ensemble = None
 
+    def test_candidates_survive_a_shallow_container_layout(self, app, monkeypatch):
+        """The image puts the package at /app/tbcare_api, three levels deep.
+
+        Walking to parents[4] there raises IndexError and the health endpoint
+        swallows it, so the service looked alive while inference was disabled.
+        """
+        from pathlib import Path
+
+        from tbcare_api.routes import screen as screen_route
+
+        shallow = Path("/app/tbcare_api/routes/screen.py")
+        monkeypatch.setattr(
+            screen_route, "__file__", str(shallow), raising=False
+        )
+        with app.app_context():
+            candidates = screen_route._artifacts_candidates()
+
+        assert Path("/app/ml/artifacts") in candidates
+        assert all(len(c.parts) > 1 for c in candidates)
+
+
 
 class TestScreenSuccessPath:
     """The end-to-end 200 path, which validation-only tests never exercised."""

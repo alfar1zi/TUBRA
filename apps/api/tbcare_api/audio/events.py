@@ -231,17 +231,40 @@ def quality_gate(
     snr_db = estimate_snr(audio, events, sample_rate, noise_floor_db)
     clipping_ratio = estimate_clipping_ratio(audio)
     num_coughs = len(events)
+    # Peak-to-noise-floor margin. Unlike estimate_snr this stays meaningful
+    # when no coherent burst was segmented: it answers "is anything clearly
+    # louder than the room?", which is what separates a quiet room from a noisy
+    # one. A take with a loud cough but a broken segmentation used to report
+    # -120 dB SNR and blame the room, which was both wrong and unactionable.
+    peak_margin_db = (
+        float(np.max(energy_db) - noise_floor_db) if len(energy_db) else -120.0
+    )
 
     passed = True
     reasons = []
 
-    if num_coughs < config.min_coughs_required:
+    # A clean, loud burst is enough: the model was trained on single cough
+    # clips, so one well-formed event is usable input. The stricter count only
+    # applies when the signal is marginal, where extra evidence matters.
+    enough_coughs = num_coughs >= config.min_coughs_required or (
+        num_coughs >= 1 and peak_margin_db >= config.strong_burst_margin_db
+    )
+    if not enough_coughs:
         passed = False
         reasons.append(f"too_few_coughs: {num_coughs} < {config.min_coughs_required}")
 
-    if snr_db < config.snr_threshold_db:
+    # Judge the room by the signal margin, not by the SNR of segments that may
+    # not exist. Fall back to the segment SNR only when it is informative.
+    signal_snr_db = (
+        max(snr_db, peak_margin_db - config.noise_margin_db)
+        if num_coughs
+        else peak_margin_db
+    )
+    if signal_snr_db < config.snr_threshold_db:
         passed = False
-        reasons.append(f"too_noisy: SNR {snr_db:.1f} dB < {config.snr_threshold_db} dB")
+        reasons.append(
+            f"too_noisy: SNR {signal_snr_db:.1f} dB < {config.snr_threshold_db} dB"
+        )
 
     if clipping_ratio > config.clipping_threshold_ratio:
         passed = False
@@ -251,10 +274,12 @@ def quality_gate(
         "passed": passed,
         "num_coughs": num_coughs,
         "cough_segments_ms": [[int(s * 1000), int(e * 1000)] for s, e in events],
-        "snr_db": round(snr_db, 1),
+        "snr_db": round(signal_snr_db, 1),
+        "peak_margin_db": round(peak_margin_db, 1),
         "clipping_ratio": round(clipping_ratio, 4),
         "noise_floor_db": round(noise_floor_db, 1),
         "reasons": reasons,
     }
+
 
     return passed, details

@@ -8,6 +8,7 @@ import numpy as np
 from pathlib import Path
 from flask import Blueprint, request, jsonify, current_app
 
+from tbcare_api.audio.config import AudioConfig
 from tbcare_api.audio.wav_io import validate_wav, WAVValidationError, compute_audio_metrics
 from tbcare_api.audio.quality import run_quality_pipeline, extract_cough_segments
 from tbcare_api.audio.logmel import process_audio_to_logmel
@@ -60,7 +61,10 @@ def _artifacts_candidates() -> list[Path]:
         candidates.append(Path(configured))
 
     # Repo checkout: .../apps/api/tbcare_api/routes/screen.py -> repo root.
-    candidates.append(file_path.parents[4] / "ml" / "artifacts")
+    # The container image places the package at /app/tbcare_api instead, which
+    # is two levels shallower, so walk up only when the depth allows it.
+    if len(file_path.parents) > 4:
+        candidates.append(file_path.parents[4] / "ml" / "artifacts")
     # Container image / compose mount.
     candidates.append(Path("/app/ml/artifacts"))
     candidates.append(file_path.parents[2] / "artifacts")
@@ -142,6 +146,7 @@ def screen():
             "reasons": quality_details.get("reasons", []),
             "cough_count": cough_count,
             "snr_db": quality_details.get("snr_db"),
+            "peak_margin_db": quality_details.get("peak_margin_db"),
             "clipping_ratio": quality_details.get("clipping_ratio"),
         }).to_json()), 400
 
@@ -149,9 +154,10 @@ def screen():
     #    user-facing cough count only: at least 3 coughs must be present.
     segments = extract_cough_segments(audio_norm, sr, max_segments=5)
 
-    if len(segments) < 3:
+    min_coughs = AudioConfig().min_coughs_required
+    if len(segments) < min_coughs:
         return jsonify(create_error_response("quality_failed", {
-            "reason": f"only {len(segments)} cough segments extracted, need at least 3",
+            "reason": f"only {len(segments)} cough segments extracted, need at least {min_coughs}",
             "cough_count": len(segments),
         }).to_json()), 400
 

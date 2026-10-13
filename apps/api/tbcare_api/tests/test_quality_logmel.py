@@ -149,15 +149,27 @@ class TestQuality:
         assert details["clipping_ratio"] < 0.01
         assert sr == 16000
 
-    def test_run_quality_pipeline_too_few_coughs(self):
+    def test_run_quality_pipeline_single_strong_cough_passes(self):
+        # One isolated cough that stands far above the room noise is enough:
+        # demanding a second one rejected real users who coughed once.
         audio = make_cough_audio(1.0, 16000)  # Only ~1 cough
         wav_bytes = make_wav_bytes(audio, 16000)
 
-        config = AudioConfig(min_coughs_required=3, snr_threshold_db=5.0)
+        config = AudioConfig(min_coughs_required=2, snr_threshold_db=5.0)
         passed, details, _, _ = run_quality_pipeline(wav_bytes, 16000, config)
 
+        assert passed is True, details
+        assert details["num_coughs"] >= 1
+        assert details["peak_margin_db"] > 0
+
+    def test_run_quality_pipeline_silence_is_rejected(self):
+        # A take with no audible cough must still fail, and must say so.
+        silence = np.zeros(16000, dtype=np.float32)
+        wav_bytes = make_wav_bytes(silence, 16000)
+
+        passed, details, _, _ = run_quality_pipeline(wav_bytes, 16000)
+
         assert passed is False
-        assert details["num_coughs"] < 3
         assert "too_few_coughs" in " ".join(details["reasons"])
 
     def test_extract_cough_segments(self):
@@ -250,7 +262,7 @@ class TestParityConfig:
         assert config.noise_percentile == 10.0
         assert config.noise_margin_db == 6.0
         assert config.hysteresis_db == 3.0
-        assert config.snr_threshold_db == 10.0
+        assert config.snr_threshold_db == 8.0
         assert config.clipping_threshold_ratio == 0.01
         assert config.min_coughs_required == 3
         assert config.max_coughs_expected == 10

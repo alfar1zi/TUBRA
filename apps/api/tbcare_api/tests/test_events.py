@@ -238,6 +238,9 @@ def test_quality_gate_too_few_coughs():
         min_coughs_required=5,
         snr_threshold_db=5.0,
         clipping_threshold_ratio=0.01,
+        # Disable the single-clear-burst escape hatch so this test exercises
+        # the count check itself, not the fallback.
+        strong_burst_margin_db=200.0,
     )
     audio = make_cough_signal(duration_s=3.0, sample_rate=16000, cough_times=[(0.5, 0.8), (1.0, 1.3)])
     passed, details = quality_gate(audio, 16000, config)
@@ -245,6 +248,22 @@ def test_quality_gate_too_few_coughs():
     assert passed is False
     assert details["num_coughs"] < 5
     assert "too_few_coughs" in " ".join(details["reasons"])
+
+
+def test_quality_gate_single_burst_clears_a_high_count_requirement():
+    config = AudioConfig(
+        sample_rate=16000,
+        min_coughs_required=5,
+        snr_threshold_db=5.0,
+        clipping_threshold_ratio=0.01,
+        strong_burst_margin_db=15.0,
+    )
+    audio = make_cough_signal(duration_s=3.0, sample_rate=16000, cough_times=[(1.0, 1.3)])
+    passed, details = quality_gate(audio, 16000, config)
+
+    assert details["num_coughs"] >= 1
+    assert details["peak_margin_db"] >= 15.0
+    assert details["passed"] is True
 
 
 def test_quality_gate_too_noisy():
