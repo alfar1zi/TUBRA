@@ -63,14 +63,31 @@ python3 ml/scripts/verify_artifacts.py
 `apps/api/tbcare_api/tests`. Runtime API tidak boleh mengimpor `torch`, `librosa`,
 atau `numba` (lihat `AGENTS.md` bagian 4.6).
 
-## Deploy Cloud Run (API)
+## Deploy
+
+### Web (Vercel)
+
+Repo ini monorepo, jadi arahkan Vercel ke subfolder web:
+
+- **Root Directory**: `apps/web`
+- **Framework Preset**: Vite
+- **Build Command**: `npm run build`
+- **Output Directory**: `dist`
+
+Secara default web memanggil API lewat path relatif `/api` (cocok dengan proxy
+Vite saat pengembangan). Bila web di-deploy sendiri sementara API ada di host
+lain, set environment variable di Vercel:
+
+```
+VITE_API_BASE=https://<host-api-anda>
+```
+
+### API (Cloud Run)
 
 ```bash
 # Butuh: gcloud auth, billing aktif, Artifact Registry repo
 ./scripts/deploy_cloudrun.sh <PROJECT_ID> [REGION] [SERVICE_NAME]
 ```
-
-Web deploy ke Vercel: set `VITE_API_BASE=<CLOUD_RUN_URL>`.
 
 ## Struktur Repo
 
@@ -80,10 +97,12 @@ tbcare/
 │   ├── web/          # React + Vite + Tailwind
 │   └── api/          # Flask + ONNX Runtime
 ├── ml/               # PyTorch training (offline)
-│   ├── artifacts/    # backbone.onnx, head.npz, model_card.json (gitignored)
-│   └── scripts/      # prepare_data, train, evaluate, export_onnx, check_parity
-├── scripts/          # run_local.sh, deploy_cloudrun.sh, measure_latency.sh
-└── docs/             # PRD, ARCHITECTURE, UI_SPEC, METHOD
+│   ├── artifacts/    # backbone.onnx(.data), head.npz, model_card.json
+│   ├── configs/      # audio.yaml, train.yaml
+│   ├── scripts/      # prepare_data, data_loader, train, export_artifacts, verify_artifacts
+│   ├── src/          # features (audio, clinical, tta), models (residual fusion)
+│   └── tests/        # paritas log-mel, resampler, TTA, kontrak artefak
+└── scripts/          # run_local.sh, deploy_cloudrun.sh, measure_latency.sh, serve_tailscale.sh
 ```
 
 ## Artefak Model
@@ -147,15 +166,15 @@ DEPLOYMENT_ENV=staging ALLOW_BLOCKED_CANDIDATE=true python3 -m tbcare_api.app
 Jangan set `VALIDATED` sampai evaluasi eksternal (kohort prospektif) tersedia:
 metrik pada `model_card.json` berasal dari validasi silang out-of-fold, bukan uji klinis.
 
-### Blocker: paritas log-Mel training dan serving GAGAL
+### Paritas log-Mel training dan serving
 
-`ml/tests/test_logmel_parity.py` gagal dengan `max|diff| = 4.09`, jauh di atas
-toleransi `1e-4` yang diwajibkan `AGENTS.md` bagian 4.5. Penyebabnya: pipeline
-serving (`apps/api/tbcare_api/audio/logmel.py`) memakai z-score pada skala log
-natural, sedangkan training (`ml/src/features/audio.py::extract_logmel` recipe
-`energy_v2`) memakai window energi + normalisasi `[0, 1]`. Model menerima fitur
-di luar distribusi latih saat dijalankan. Perbaikan menyentuh pipeline serving
-dan perlu persetujuan (lihat `AGENTS.md` bagian 3.2).
+`ml/tests/test_logmel_parity.py` membandingkan pipeline serving
+(`apps/api/tbcare_api/audio/logmel.py`) dengan training
+(`ml/src/features/audio.py::extract_logmel`, recipe `energy_v2`) pada sinyal
+sintetis yang sama. Keduanya kini memakai window energi + normalisasi `[0, 1]`
+dan resampler yang sama, sehingga `max|diff|` berada di bawah toleransi `1e-4`
+yang diwajibkan `AGENTS.md` bagian 4.5. Test ini wajib lulus sebelum artefak
+apa pun boleh diekspor.
 
 ## Lisensi
 
