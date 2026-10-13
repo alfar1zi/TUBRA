@@ -1,0 +1,54 @@
+{
+  "grouping": "country",
+  "note": "OOF fusion AUROC per country. Single-class countries report null.",
+  "subgroups": {
+    "IN": {
+      "n": 115,
+      "n_positive": 12,
+      "n_negative": 103,
+      "auroc": 0.8487
+    },
+    "KE": {
+      "n": 123,
+      "n_positive": 87,
+      "n_negative": 36,
+      "auroc": 0.6957
+    },
+    "MG": {
+      "n": 150,
+      "n_positive": 73,
+      "n_negative": 77,
+      "auroc": 0.7915
+    },
+    "PH": {
+      "n": 190,
+      "n_positive": 19,
+      "n_negative": 171,
+      "auroc": 0.6864
+    },
+    "SA": {
+      "n": 126,
+      "n_positive": 25,
+      "n_negative": 101,
+      "auroc": 0.7457
+    },
+    "TZ": {
+      "n": 79,
+      "n_positive": 13,
+      "n_negative": 66,
+      "auroc": 0.7389
+    },
+    "UG": {
+      "n": 228,
+      "n_positive": 77,
+      "n_negative": 151,
+      "auroc": 0.7981
+    },
+    "VN": {
+      "n": 152,
+      "n_positive": 64,
+      "n_negative": 88,
+      "auroc": 0.7649
+    }
+  }
+}
