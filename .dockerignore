@@ -1,0 +1,32 @@
+# Keep the build context small and avoid leaking data/secrets into layers.
+.git
+.gitignore
+node_modules
+**/node_modules
+apps/web/node_modules
+apps/web/dist
+
+# Datasets and audio: never needed to build the API image.
+ml/data
+**/*.wav
+**/*.flac
+**/*.mp3
+**/*.m4a
+**/*.npy
+**/*.npz
+!ml/artifacts/head.npz
+!ml/artifacts/oof_predictions.npz
+
+# Local env and secrets
+.env
+*.key
+*.crt
+*.pem
+
+# Local scratch / caches
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+docs
