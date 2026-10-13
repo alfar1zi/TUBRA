@@ -19,6 +19,17 @@ class AudioConfig:
     clipping_threshold_ratio: float = 0.01
     min_coughs_required: int = 3
     max_coughs_expected: int = 10
+    # --- Stage 2: spectral gate (cough vs noise/music/speech) ---
+    # A cough is a sharp, broadband, high-frequency burst. Tones, music and
+    # voiced speech concentrate their energy in a few low/mid bands, so a
+    # spectral-centroid floor plus a zero-crossing-rate window separate them
+    # without rejecting real coughs. Defaults were calibrated on the CODA-TB
+    # recordings (>90% of real cough loud-frames pass) and reject tones,
+    # music, speech and low-frequency thuds.
+    use_spectral_gate: bool = True
+    min_spectral_centroid_hz: float = 350.0
+    min_zero_crossing_rate: float = 0.03
+    max_zero_crossing_rate: float = 0.34
 
 
 AUDIO_CONFIG = AudioConfig()
