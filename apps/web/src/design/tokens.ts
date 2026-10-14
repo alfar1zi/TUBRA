@@ -26,6 +26,8 @@ export const palette = {
   warningSoft: "#FEF3C7",
   /** Soft danger surface. */
   dangerSoft: "#FFD7E0",
+  /** Soft success surface, for low-concern results. */
+  successSoft: "#DCFCE7",
   /** Soft accent surface (yellow). */
   accentSoft: "#FFE683",
   /** Brand gradient end stop (Figma linear gradient #0F766E → #115E59). */

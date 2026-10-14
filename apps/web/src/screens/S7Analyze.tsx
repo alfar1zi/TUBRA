@@ -1,69 +1,88 @@
-import { useEffect, useState } from "react";
-import { Button } from "@/components";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Button, Banner, MobileShell } from "@/components";
 import { copy } from "@/copy";
 import { postScreen, ScreenResponse, ScreenApiError } from "@/api/client";
+import type { ScreenPayload } from "@/api/client";
 import { buildScreenPayload } from "@/state/screenState";
-import { SymptomData } from "@/state/screenState";
+import type { GateData, SymptomData } from "@/state/screenState";
 
 interface S7AnalyzeProps {
   audioBlob: Blob;
-  gateData: { age: number | null; coughDurationWeeks: number | null };
+  gateData: GateData;
   symptomData: SymptomData;
   onResult: (result: ScreenResponse) => void;
-  onQualityFail: (data: { 
-    acceptedCoughs: number; 
-    rejectedCoughs: number; 
-    noiseLevel: "quiet" | "moderate" | "loud"; 
-    clipping: boolean; 
+  onQualityFail: (data: {
+    acceptedCoughs: number;
+    rejectedCoughs: number;
+    noiseLevel: "quiet" | "moderate" | "loud";
+    clipping: boolean;
     errorCode: string;
     snrDb?: number;
     clippingRatio?: number;
+    qualityReasons?: QualityReason[];
   }) => void;
   onError: (errorCode: string) => void;
   onCancel: () => void;
 }
-const STEPS = [
-  "Memotong suara batuk",
-  "Membaca pola suara",
-  "Menggabungkan dengan gejala Anda",
-];
+const STEPS = copy.analyze.steps;
 
-function mapApiErrorToFrontend(error: ScreenApiError): { frontendCode: string; qualityData?: { acceptedCoughs: number; rejectedCoughs: number; noiseLevel: "quiet" | "moderate" | "loud"; clipping: boolean; snrDb?: number; clippingRatio?: number } } {
+/**
+ * Reasons the server can attach to a quality rejection. The server reports
+ * every failed check, not just the first, so the screen must show all of them:
+ * picking one used to blame the room ("derau terlalu besar") for a take that
+ * actually contained no detected cough.
+ */
+export type QualityReason = "too_few_coughs" | "too_noisy" | "clipped";
+
+function classifyQualityReasons(reasons: string[]): QualityReason[] {
+  const found: QualityReason[] = [];
+  if (reasons.some((r) => r.includes("too_few_coughs"))) found.push("too_few_coughs");
+  if (reasons.some((r) => r.includes("too_noisy"))) found.push("too_noisy");
+  if (reasons.some((r) => r.includes("clipped"))) found.push("clipped");
+  return found;
+}
+
+function mapApiErrorToFrontend(error: ScreenApiError): {
+  frontendCode: string;
+  qualityData?: {
+    acceptedCoughs: number;
+    rejectedCoughs: number;
+    noiseLevel: "quiet" | "moderate" | "loud";
+    clipping: boolean;
+    snrDb?: number;
+    clippingRatio?: number;
+    qualityReasons?: QualityReason[];
+  };
+} {
   const code = error.code;
   const details = error.details || {};
   const reasons = (details.reasons as string[]) || [];
-  
-  // Quality failed - map based on reasons
+
+  // Quality failed: carry every reason through so the screen can explain what
+  // actually went wrong instead of guessing from a single code.
   if (code === "quality_failed") {
     const coughCount = (details.cough_count as number) || 0;
     const snrDb = (details.snr_db as number) || 0;
     const clippingRatio = (details.clipping_ratio as number) || 0;
-    
-    let frontendCode = "E6"; // default: too few coughs
-    let noiseLevel: "quiet" | "moderate" | "loud" = "quiet";
-    let clipping = false;
-    
-    if (reasons.some(r => r.includes("too_noisy"))) {
-      frontendCode = "E7";
-      noiseLevel = "loud";
-    } else if (reasons.some(r => r.includes("clipped"))) {
-      frontendCode = "E8";
-      clipping = true;
-    } else if (reasons.some(r => r.includes("too_few_coughs"))) {
-      frontendCode = "E6";
-    } else if (reasons.some(r => r.includes("segments"))) {
-      frontendCode = "E6"; // not enough segments extracted
-    }
-    
+    const qualityReasons = classifyQualityReasons(reasons);
+
+    const frontendCode =
+      qualityReasons[0] === "too_noisy"
+        ? "E7"
+        : qualityReasons[0] === "clipped"
+        ? "E8"
+        : "E6";
+
     return {
       frontendCode,
       qualityData: {
         acceptedCoughs: coughCount,
         rejectedCoughs: 0,
-        noiseLevel,
-        clipping,
+        noiseLevel: qualityReasons.includes("too_noisy") ? "loud" : "quiet",
+        clipping: qualityReasons.includes("clipped"),
         snrDb,
         clippingRatio,
+        qualityReasons,
       },
     };
   }
@@ -78,10 +97,15 @@ function mapApiErrorToFrontend(error: ScreenApiError): { frontendCode: string; q
   }
   
   // Invalid payload
-  if (code === "invalid_payload") {
+  if (code === "payload_invalid") {
     return { frontendCode: "E11" };
   }
-  
+
+  // Model not ready / unavailable (transient)
+  if (code === "model_unavailable") {
+    return { frontendCode: "E10" };
+  }
+
   // Inference errors
   if (code === "inference_error" || code === "explain_error") {
     return { frontendCode: "E10" };
@@ -100,6 +124,23 @@ function mapApiErrorToFrontend(error: ScreenApiError): { frontendCode: string; q
   return { frontendCode: "generic" };
 }
 
+// React StrictMode mounts effects twice in development. Without this guard the
+// screening POST would be sent twice (and the first one aborted on cleanup,
+// surfacing as net::ERR_ABORTED). Deduplicating on the recorded Blob's identity
+// keeps exactly one request per recording; the entry is weakly referenced so it
+// is reclaimed once the recording is no longer held.
+const inFlightScreens = new WeakMap<Blob, Promise<ScreenResponse>>();
+
+function postScreenOnce(audioBlob: Blob, payload: ScreenPayload): Promise<ScreenResponse> {
+  const existing = inFlightScreens.get(audioBlob);
+  if (existing) return existing;
+  const request = postScreen(audioBlob, payload).finally(() => {
+    inFlightScreens.delete(audioBlob);
+  });
+  inFlightScreens.set(audioBlob, request);
+  return request;
+}
+
 export function S7Analyze({
   audioBlob,
   gateData: _gateData,
@@ -113,43 +154,64 @@ export function S7Analyze({
   const [timedOut, setTimedOut] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
-  const payload = buildScreenPayload(_gateData, _symptomData);
+  // buildScreenPayload returns a fresh object each render; memoise it so the
+  // effect below does not re-run (and re-POST) on every render.
+  const payload = useMemo(
+    () => buildScreenPayload(_gateData, _symptomData),
+    [_gateData, _symptomData]
+  );
+  // Keep the latest callbacks in refs so the effect can list them without
+  // re-running; the request must fire exactly once per mount.
+  const onResultRef = useRef(onResult);
+  const onQualityFailRef = useRef(onQualityFail);
+  const onErrorRef = useRef(onError);
+  onResultRef.current = onResult;
+  onQualityFailRef.current = onQualityFail;
+  onErrorRef.current = onError;
 
   useEffect(() => {
     let mounted = true;
+    // Guarantees only ONE terminal callback (result | quality-fail | error)
+    // even if the timeout and the request race.
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return false;
+      settled = true;
+      return true;
+    };
 
     const callApi = async () => {
       try {
-        const result: ScreenResponse = await postScreen(audioBlob, payload);
-        if (mounted) {
-          onResult(result);
-        }
+        const result: ScreenResponse = await postScreenOnce(audioBlob, payload);
+        if (!mounted || !finish()) return;
+        onResultRef.current(result);
       } catch (err) {
-        if (!mounted) return;
-        
+        if (!mounted || !finish()) return;
+
         if (err instanceof ScreenApiError) {
           const mapped = mapApiErrorToFrontend(err);
-          
+
           if (err.code === "quality_failed" && mapped.qualityData) {
             // Quality check failed - show S6QualityCheck with real details
-            onQualityFail({
+            onQualityFailRef.current({
               ...mapped.qualityData,
               errorCode: mapped.frontendCode,
             });
           } else {
             // Other API errors
             setApiError(mapped.frontendCode);
-            onError(mapped.frontendCode);
+            onErrorRef.current(mapped.frontendCode);
           }
         } else if (err instanceof TypeError && err.message.includes("fetch")) {
           // Network error
           setApiError("network");
-          onError("network");
+          onErrorRef.current("network");
         } else {
           // Unknown error
           const errorCode = err instanceof Error ? err.message : "generic";
           setApiError(errorCode);
-          onError(errorCode);
+          onErrorRef.current(errorCode);
         }
       }
     };
@@ -157,10 +219,9 @@ export function S7Analyze({
     callApi();
 
     const timer = window.setTimeout(() => {
-      if (mounted) {
-        setTimedOut(true);
-        onError("E10"); // timeout
-      }
+      if (!mounted || !finish()) return;
+      setTimedOut(true);
+      onErrorRef.current("E10"); // timeout
     }, 20000);
 
     const stepTimer = window.setInterval(() => {
@@ -172,48 +233,74 @@ export function S7Analyze({
       window.clearTimeout(timer);
       window.clearInterval(stepTimer);
     };
-  }, [audioBlob, payload, onResult, onQualityFail, onError]);
+  }, [audioBlob, payload]);
 
-  if (timedOut || apiError) return null;
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 text-center">
-          <h1 className="text-2xl font-semibold text-gray-900 mb-2">{copy.analyze.title}</h1>
-          <p className="text-gray-600 mb-8">{copy.analyze.subtitle}</p>
-
-          <div className="space-y-4 mb-8" role="status" aria-live="polite">
-            {STEPS.map((step, i) => (
-              <div
-                key={i}
-                className={`flex items-center gap-3 transition-colors ${i <= currentStep ? "text-gray-900" : "text-gray-400"}`}
-              >
-                <div
-                  className={`flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center ${
-                    i < currentStep ? "bg-blue-600 border-blue-600" : i === currentStep ? "border-blue-600" : "border-gray-300"
-                  }`}
-                >
-                  {i < currentStep ? (
-                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : (
-                    <span className={i === currentStep ? "text-blue-600 font-bold" : "text-gray-400"}>{i + 1}</span>
-                  )}
-                </div>
-                <p className="text-left">{step}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="space-y-3">
-            <Button size="lg" fullWidth onClick={onCancel} disabled>
-              {copy.common.cancel}
+  if (timedOut || apiError) {
+    return (
+      <MobileShell>
+        <div
+          className="flex flex-col flex-1 justify-center items-center text-center"
+          style={{
+            paddingTop: "env(safe-area-inset-top, 0px)",
+            paddingBottom: "env(safe-area-inset-bottom, 0px)",
+          }}
+        >
+          <Banner variant="warning" title={copy.analyze.errorTitle}>
+            <p>{copy.analyze.errorInference}</p>
+          </Banner>
+          <div className="mt-6 w-full space-y-3">
+            <Button size="lg" fullWidth onClick={onCancel}>
+              {copy.analyze.backToRecordButton}
+            </Button>
+            <Button variant="secondary" size="md" fullWidth onClick={onCancel}>
+              {copy.common.back}
             </Button>
           </div>
         </div>
+      </MobileShell>
+    );
+  }
+
+  return (
+    <MobileShell>
+      {/* Centred rather than pinned 289px from the top so the spinner and copy
+          stay grouped on any phone height. */}
+      <div
+        className="flex flex-col flex-1 items-center justify-center gap-8 text-center"
+        style={{
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        }}
+      >
+        {/* Figma (frame 20:610, group 27:657): a 100px ring, 14.5px thick
+            (#E1E1E1 track) with a taupe (#B3A8A8) arc covering ~81% of the
+            circle, rotating. */}
+        <svg
+          className="w-[100px] h-[100px] animate-spin"
+          viewBox="0 0 100 100"
+          role="status"
+          aria-live="polite"
+          aria-label={copy.analyze.title}
+        >
+          <circle cx="50" cy="50" r="42.75" fill="none" stroke="#E1E1E1" strokeWidth="14.5" />
+          <path
+            d="M88.5 23.5 A42.75 42.75 0 1 0 92.13 65.9"
+            fill="none"
+            stroke="#B3A8A8"
+            strokeWidth="14.5"
+            strokeLinecap="round"
+          />
+        </svg>
+        <div>
+          <h1 className="text-[22px] font-medium leading-[29px] text-text-primary/80">
+            {copy.analyze.title}
+          </h1>
+          <p className="mt-2 text-base font-normal leading-[21px] text-text-primary/60">
+            {copy.analyze.subtitle}
+          </p>
+        </div>
+        <span className="sr-only">{STEPS[currentStep]}</span>
       </div>
-    </div>
+    </MobileShell>
   );
 }

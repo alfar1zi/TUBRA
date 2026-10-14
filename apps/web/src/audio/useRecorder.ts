@@ -8,6 +8,14 @@ interface AudioSettings {
   autoGainControl: boolean;
 }
 
+/**
+ * Hard stop for a take. The screen asks for five coughs, which at a natural
+ * pace take ten to fifteen seconds; the old 5 s cap ended the take before
+ * people finished coughing and left the server with almost nothing to detect.
+ * The API accepts up to 30 s of audio.
+ */
+export const MAX_RECORDING_SECONDS = 15;
+
 interface RecorderState {
   recording: boolean;
   duration: number;
@@ -29,51 +37,158 @@ export function useRecorder() {
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
+  const recordingRef = useRef<boolean>(false);
   const stopRecordingRef = useRef<() => void>();
   const onCompleteRef = useRef<((blob: Blob) => void) | null>(null);
+  /**
+   * Monotonic token identifying the current start attempt. Each call to
+   * `startRecording` claims the next value; an async continuation compares the
+   * token it captured against this ref and bails (releasing the mic) if a newer
+   * attempt has superseded it, or if `stopRecording` bumped it.
+   *
+   * A plain boolean cannot express this: React StrictMode runs start #1,
+   * cleanup (stop), then start #2, and resetting a shared boolean for start #2
+   * would silently un-abort start #1, leaving two live mic graphs fighting.
+   */
+  const startGenerationRef = useRef<number>(0);
+  /** True once the worklet has delivered its first buffer this run. */
+  const streamedRef = useRef<boolean>(false);
+  /** Fires if no buffer arrives shortly after start (suspended-context guard). */
+  const noAudioTimerRef = useRef<number | null>(null);
+  /** True while startRecording is between its first line and settling. */
+  const startingRef = useRef<boolean>(false);
+  /** Safety timer for the stop->flush->teardown handshake. */
+  const flushTimerRef = useRef<number | null>(null);
+  /**
+   * Number of consecutive starts that delivered no audio at all, and the
+   * retry budget before the recorder reports an error envelope or an empty
+   * device really is what the user has.
+   */
+  const emptyStartCountRef = useRef<number>(0);
+  const MAX_EMPTY_STARTS = 2;
 
   const setOnComplete = useCallback((callback: ((blob: Blob) => void) | null) => {
     onCompleteRef.current = callback;
   }, []);
 
   const updateDuration = useCallback(() => {
-    if (state.recording) {
+    // Read `recording` from a ref, not state: this callback is scheduled with
+    // requestAnimationFrame and would otherwise capture a stale `recording`
+    // value and keep rescheduling after the recording stopped.
+    if (recordingRef.current) {
       const elapsed = (Date.now() - startTimeRef.current) / 1000;
-      setState((s) => ({ ...s, duration: Math.min(elapsed, 5) }));
-      if (elapsed < 5) {
+      setState((s) => ({ ...s, duration: Math.min(elapsed, MAX_RECORDING_SECONDS) }));
+      if (elapsed < MAX_RECORDING_SECONDS) {
         animationFrameRef.current = requestAnimationFrame(updateDuration);
+      } else {
+        // The worklet flushes and fires onComplete, which ends the take.
+        stopRecordingRef.current?.();
       }
     }
-  }, [state.recording]);
+  }, []);
 
-  const stopRecording = useCallback(() => {
+  /**
+   * Releases every live resource (nodes, mic track, context). Separate from
+   * `stopRecording` so the flush handshake can happen first: closing the
+   * AudioContext tears down the worklet thread, and doing that immediately
+   * after asking it to flush loses the final "complete" message that carries
+   * the recorded audio.
+   */
+  const teardown = useCallback(() => {
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.disconnect();
+      sourceNodeRef.current = null;
+    }
     if (workletNodeRef.current) {
-      workletNodeRef.current.port.postMessage("stop");
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current = null;
     }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((t) => t.stop());
       mediaStreamRef.current = null;
     }
     if (audioContextRef.current) {
-      audioContextRef.current.close();
+      void audioContextRef.current.close();
       audioContextRef.current = null;
     }
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
+    if (noAudioTimerRef.current !== null) {
+      window.clearTimeout(noAudioTimerRef.current);
+      noAudioTimerRef.current = null;
+    }
+    if (flushTimerRef.current !== null) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    recordingRef.current = false;
     setState((s) => ({ ...s, recording: false }));
   }, []);
+
+  const stopRecording = useCallback(() => {
+    // Supersede any in-flight startRecording() so its async continuation stops
+    // touching the mic once it resumes after an await.
+    startGenerationRef.current += 1;
+    startingRef.current = false;
+
+    // If a graph is live, ask the worklet to flush and let its "complete"
+    // message drive the teardown, so the final buffer is not lost. A safety
+    // timer tears down anyway if the message never arrives (e.g. the worklet
+    // was already gone).
+    if (workletNodeRef.current && mediaStreamRef.current) {
+      workletNodeRef.current.port.postMessage("stop");
+      if (flushTimerRef.current !== null) window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = window.setTimeout(() => {
+        flushTimerRef.current = null;
+        teardown();
+      }, 800);
+      return;
+    }
+    teardown();
+  }, [teardown]);
 
   stopRecordingRef.current = stopRecording;
 
   const startRecording = useCallback(async () => {
+    // Claim this attempt's token. Any previous in-flight start now sees a
+    // newer generation and releases itself at its next checkpoint, so the two
+    // never both hold a live mic graph. `startingRef` additionally suppresses
+    // a *synchronous* second call before the first has claimed its token.
+    if (startingRef.current) return;
+    startingRef.current = true;
+    const generation = (startGenerationRef.current += 1);
+    streamedRef.current = false;
     setState((s) => ({ ...s, error: null, audioBlob: null }));
 
+    // True once a newer start (or stopRecording) has superseded this attempt.
+    const isStale = (): boolean => generation !== startGenerationRef.current;
+
+    // Releases only the handles *this* attempt acquired. It must never touch
+    // the shared refs, because a superseded attempt would otherwise close the
+    // media stream / AudioContext the newer attempt is already running on.
+    const release = (owned: {
+      stream?: MediaStream | null;
+      context?: AudioContext | null;
+      source?: AudioNode | null;
+      worklet?: AudioWorkletNode | null;
+    }): void => {
+      owned.source?.disconnect();
+      owned.worklet?.disconnect();
+      owned.stream?.getTracks().forEach((t) => t.stop());
+      if (owned.context) void owned.context.close();
+    };
+
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new DOMException("microphone unavailable", "NotSupportedError");
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: false,
@@ -82,20 +197,66 @@ export function useRecorder() {
           channelCount: 1,
         },
       });
-
+      if (isStale()) {
+        release({ stream });
+        return;
+      }
       mediaStreamRef.current = stream;
 
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
 
+      // Autoplay policy: an AudioContext created outside a user gesture (the
+      // record screen auto-starts on mount) begins "suspended". A suspended
+      // context never runs the graph, so the worklet's process() is never
+      // called and no audio is ever captured, even though getUserMedia
+      // succeeded and the UI shows "recording".
+      //
+      // Do NOT await resume() unbounded: with the autoplay policy blocking the
+      // context, resume() can return a promise that never settles (there is no
+      // user gesture yet), which deadlocks the whole start and freezes the
+      // screen on "0%" forever. Kick it off, wait at most a moment for it to
+      // take effect, then continue: the graph is built either way, and a later
+      // gesture (tapping the record button, or anywhere on the page) resumes it.
+      if (audioContext.state === "suspended") {
+        await Promise.race([
+          audioContext.resume().catch(() => {}),
+          new Promise<void>((resolve) => window.setTimeout(resolve, 250)),
+        ]);
+      }
+      if (isStale()) {
+        release({ stream, context: audioContext });
+        return;
+      }
+
+      if (!audioContext.audioWorklet) {
+        throw new DOMException("AudioWorklet unavailable", "NotSupportedError");
+      }
       await audioContext.audioWorklet.addModule("/audio/recorder-processor.js");
+      if (isStale()) {
+        release({ stream, context: audioContext });
+        return;
+      }
+
+      if (isStale()) {
+        release({ stream, context: audioContext });
+        return;
+      }
 
       const source = audioContext.createMediaStreamSource(stream);
+      sourceNodeRef.current = source;
       const workletNode = new AudioWorkletNode(audioContext, "recorder-processor");
       workletNodeRef.current = workletNode;
 
       source.connect(workletNode);
-      workletNode.connect(audioContext.destination);
+      // The worklet must be connected to the destination so the graph keeps
+      // pulling render quanta, but connecting it directly plays the live mic
+      // through the speakers (a loud feedback howl on a laptop). Route it
+      // through a zero-gain node: the graph still runs, nothing is audible.
+      const silentSink = audioContext.createGain();
+      silentSink.gain.value = 0;
+      workletNode.connect(silentSink);
+      silentSink.connect(audioContext.destination);
 
       const track = stream.getAudioTracks()[0];
       const settings = track.getSettings();
@@ -113,7 +274,9 @@ export function useRecorder() {
 
       workletNode.port.onmessage = (e) => {
         if (e.data.type === "stream") {
-          // Live audio buffer for real-time visualization and cough counting
+          // Live audio buffer for real-time visualization and cough counting.
+          // Its arrival is the proof the graph is actually running.
+          streamedRef.current = true;
           setState((s) => ({ ...s, audioBuffer: e.data.data }));
           return;
         }
@@ -128,6 +291,7 @@ export function useRecorder() {
           const wavBuffer = encodeWAV(int16Array, audioContext.sampleRate);
           const blob = new Blob([wavBuffer], { type: "audio/wav" });
 
+          recordingRef.current = false;
           setState((s) => ({
             ...s,
             recording: false,
@@ -135,19 +299,59 @@ export function useRecorder() {
             audioBlob: blob,
             audioBuffer: float32Array,
           }));
+          // A flush also arrives when React unmounts the screen (StrictMode
+          // re-mounts every effect once in the deployed build too): the
+          // cleanup posts "stop" and the worklet replays whatever it has,
+          // often a single render quantum. Forwarding that as a finished
+          // take sent users straight to the quality screen with a ~10 ms
+          // "recording", which the API then rejected as inaudible. Only
+          // deliver a flush for a take that is still live and not superseded.
+          if (!recordingRef.current || isStale()) {
+            teardown();
+            return;
+          }
+          emptyStartCountRef.current = 0;
           onCompleteRef.current?.(blob);
-          stopRecordingRef.current?.();
+          // The flush handshake is done: release the graph now (this also
+          // clears the stopRecording safety timer).
+          teardown();
         }
       };
       workletNode.port.postMessage("start");
+      recordingRef.current = true;
       setState((s) => ({ ...s, recording: true, duration: 0 }));
       animationFrameRef.current = requestAnimationFrame(updateDuration);
 
+      // Watchdog: a running graph streams a buffer every ~100ms. If nothing
+      // arrives the graph observed is not delivering audio: the context is
+      // suspended (autoplay policy), or the worklet's input has no channels
+      // (a device that publishes an empty capture, such as a virtual or fake
+      // mic). Without this the screen claims to be calibrating forever. The
+      // retry budget keeps a genuinely recoverable device alive while making
+      // sure an empty one surfaces a clear error instead of an endless loop
+      // of silent restarts.
+      noAudioTimerRef.current = window.setTimeout(() => {
+        if (!recordingRef.current || streamedRef.current) return;
+        stopRecordingRef.current?.();
+        emptyStartCountRef.current += 1;
+        if (emptyStartCountRef.current >= MAX_EMPTY_STARTS) {
+          setState((s) => ({ ...s, error: "no_audio", recording: false }));
+        }
+      }, 1500);
+
+      startingRef.current = false;
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      // Release anything already acquired (mic track, AudioContext, worklet)
+      // so a failed start does not leak a live microphone.
+      stopRecordingRef.current?.();
+      startingRef.current = false;
+      // Map the raw DOM/engine message to a stable machine-readable code; the
+      // UI (S4/S5 copy) decides how to phrase it, we do not surface engine text.
+      const errorMsg = toRecorderErrorCode(err);
+      teardown();
       setState((s) => ({ ...s, error: errorMsg, recording: false }));
     }
-  }, [updateDuration]);
+  }, [teardown, updateDuration]);
 
   useEffect(() => {
     return () => {
@@ -155,7 +359,10 @@ export function useRecorder() {
     };
   }, [stopRecording]);
 
-  return { state, startRecording, stopRecording, setOnComplete };
+  /** Resumes the live AudioContext from a user gesture; see the helper below. */
+  const resume = useCallback(() => resumeAudioContext(audioContextRef.current), []);
+
+  return { state, startRecording, stopRecording, setOnComplete, resume };
 }
 
 function encodeWAV(samples: Int16Array, sampleRate: number): ArrayBuffer {
@@ -194,4 +401,41 @@ function writeString(view: DataView, offset: number, str: string) {
   for (let i = 0; i < str.length; i++) {
     view.setUint8(offset + i, str.charCodeAt(i));
   }
+}
+
+/** Stable, UI-mappable error codes for the recorder. */
+export type RecorderErrorCode =
+  | "mic_permission"
+  | "mic_not_found"
+  | "audio_context"
+  | "no_audio";
+
+/**
+ * Maps a thrown error to a stable code so the UI can show a localised, curated
+ * message instead of raw engine text (which is English, verbose, and leaks
+ * browser internals). See `copy.record.error*`.
+ */
+export function toRecorderErrorCode(err: unknown): RecorderErrorCode {
+  const name = err instanceof DOMException ? err.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "mic_permission";
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return "mic_not_found";
+  }
+  return "audio_context";
+}
+
+/**
+ * Resumes a live AudioContext that the autoplay policy left "suspended".
+ * A context created outside a user gesture (the record screen auto-starts on
+ * mount) may stay suspended until resumed inside a real gesture task, so the
+ * record button calls this as a fallback. Returns true when it is running.
+ */
+export function resumeAudioContext(ctx: AudioContext | null): boolean {
+  if (!ctx) return false;
+  if (ctx.state === "suspended") {
+    void ctx.resume();
+  }
+  return ctx.state === "running";
 }
