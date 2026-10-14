@@ -1,74 +1,148 @@
+/**
+ * All user-facing text lives here. The forbidden-word test enforces that UI
+ * components reference `copy` instead of hardcoding strings.
+ *
+ * Content is authored to match the Figma design "Joints UGM 2026 UI Section"
+ * (product name: TUBRA). Where the design and the clinical constraints diverge,
+ * the clinical wording wins (the app must never claim a diagnosis).
+ */
 export const copy = {
+  /** Product name shown in the UI and metadata. */
+  brand: "TUBRA",
   home: {
-    title: "TBCare",
-    subtitle: "Skrining batuk untuk pemeriksaan dahak",
-    startButton: "Mulai Skrining",
-    howItWorksLink: "Cara kerja & bukti",
-    privacyLink: "Privasi",
+    title: "Batuk lebih dari 2 minggu? Jangan ditunda",
+    subtitle:
+      "Rekam suara batukmu dan dapatkan saran langkah selanjutnya untuk skrining TBC.",
+    startButton: "Mulai cek batuk",
+  },
+  splash: {
+    title: "TUBRA",
+    subtitle: "Listen and Care earlier.",
   },
   consent: {
-    title: "Persetujuan",
+    title: "Hai! 👋 Sebelum mulai,",
+    subtitle: "Yuk, kenali dulu cara TUBRA membantu Anda memahami kondisi pernapasan.",
     body: [
-      "Aplikasi ini membantu Anda memutuskan kapan sebaiknya memeriksa dahak.",
-      "Anda akan menjawab pertanyaan gejala dan merekam 5 batuk.",
-      "Hasilnya berupa tingkat saran (A, B, C), bukan diagnosis.",
-      "Data audio dan jawaban tidak disimpan di server. Tidak ada identitas yang dikumpulkan.",
+      "Kamu akan menjawab beberapa pertanyaan tentang gejala yang kamu rasakan.",
+      "Kamu akan diminta merekam batuk sebanyak 5 kali.",
+      "Setelah selesai, kamu bisa melihat hasil skrining awal dari TUBRA. Hasil ini bukan diagnosis dan belum bisa memastikan apakah kamu terkena TBC atau tidak.",
+      "Rekaman dan jawabanmu tidak disimpan di server, dan kamu tidak perlu memasukkan data diri.",
     ],
-    agreeButton: "Setuju & Lanjutkan",
-    disagreeButton: "Tidak, keluar",
+    agreeButton: "Iya, aku menyetujuinya",
+    disagreeButton: "Aku tidak setuju",
   },
-  gate: {
-    title: "Gerbang Kelayakan",
-    subtitle: "Skrining ini untuk orang dewasa yang batuk 2 minggu atau lebih.",
-    ageLabel: "Usia (tahun)",
-    agePlaceholder: "Contoh: 35",
-    coughDurationLabel: "Sudah berapa minggu batuk?",
-    coughDurationPlaceholder: "Contoh: 3",
-    errorAge: "Usia minimal 18 tahun, maksimal 100 tahun.",
-    errorCoughDuration: "Minimal 2 minggu untuk skrining ini.",
-    continueButton: "Lanjut ke Gejala",
-  },
-  symptoms: {
-    title: "Pertanyaan Gejala",
-    subtitle: "Jawab berdasarkan kondisi Anda saat ini.",
-    questions: [
-      { key: "fever", label: "Demam?" },
-      { key: "nightSweats", label: "Keringat malam?" },
-      { key: "weightLoss", label: "Berat badan turun tanpa sebab jelas?" },
-      { key: "hemoptysis", label: "Batuk darah?" },
-      { key: "chestPain", label: "Nyeri dada?" },
-      { key: "fatigue", label: "Lelah berlebihan?" },
-      { key: "smoking", label: "Merokok?" },
-    ],
-    yes: "Ya",
-    no: "Tidak",
-    errorIncomplete: "Semua pertanyaan harus dijawab.",
-    continueButton: "Lanjut ke Persiapan Rekam",
+  /**
+   * The question flow is 9 single-question screens, matching the Figma design.
+   * Order and wording are taken verbatim from the design.
+   */
+  questions: {
+    progressLabel: "Tahap Pertanyaan",
+    progressTemplate: "{n} dari 9 Pertanyaan",
+    backButton: "Kembali",
+    nextButton: "Lanjut",
+    consentNote:
+      "Peruntukan screening untuk orang dewasa yang sudah batuk selama 2 minggu atau lebih",
+    items: {
+      age: {
+        question: "Berapa umur kamu?",
+        unit: "tahun",
+        min: 18,
+        max: 100,
+        error: "Usia minimal 18 tahun, maksimal 100 tahun.",
+      },
+      coughDuration: {
+        question: "Sudah berapa lama kamu batuk?",
+        options: {
+          lt2w: "Kurang dari 2 minggu",
+          w2to4: "2–4 minggu",
+          m1to2: "1–2 bulan",
+          gt2m: "Lebih dari 2 bulan",
+        },
+      },
+      sex: {
+        question: "Apa jenis kelamin kamu?",
+        options: { male: "Laki-laki", female: "Perempuan" },
+      },
+      hemoptysis: {
+        question: "Apakah ada darah saat kamu batuk?",
+        options: { yes: "Iya, berdarah", no: "Tidak, tidak ada darah" },
+      },
+      fever: {
+        question:
+          "Dalam sebulan terakhir, apakah kamu mengalami demam yang datang dan pergi?",
+        options: { yes: "Iya, sempat mengalami", no: "Tidak sama sekali" },
+      },
+      nightSweats: {
+        question:
+          "Apakah kamu sering berkeringat banyak saat tidur malam, sampai pakaian atau seprai basah?",
+        options: {
+          yes: "Iya, sangat berkeringat",
+          sometimes: "Hanya berkeringat karena panas",
+          no: "Tidak sama sekali",
+        },
+      },
+      weightLoss: {
+        question:
+          "Apakah berat badan kamu turun tanpa alasan yang jelas dalam sebulan terakhir?",
+        options: { yes: "Iya, sempat turun", no: "Tidak turun sama sekali" },
+      },
+      priorTb: {
+        question:
+          "Apakah kamu pernah didiagnosis TBC atau menjalani pengobatan TBC sebelumnya?",
+        options: { yes: "Iya, pernah", no: "Tidak" },
+      },
+      smoking: {
+        question: "Apakah kamu merokok?",
+        options: {
+          never: "Tidak pernah",
+          quit: "Pernah, tapi sudah berhenti",
+          current: "Iya, saya merokok",
+        },
+      },
+    },
   },
   prepRecord: {
-    title: "Persiapan Rekam Batuk",
-    body: [
-      "Cari tempat yang tenang.",
-      "Duduk atau berdiri tegak, leher tidak dibungkuk.",
-      "Tarik napas dalam, batuk keras 5 kali ke arah mikrofon.",
-      "Jarak mulut ke mikrofon sekitar 10-15 cm.",
-      "Setiap batuk dipisah jeda singkat.",
-    ],
+    title: "Tahap Rekam Batuk",
+    subtitle: "Sekarang, Rekam Batukmu",
+    body: "Batuk sebanyak 5 kali dengan klik tombol rekam. Suara batuk harus terdengar jelas.",
     warning: "Pastikan izin mikrofon diizinkan di browser.",
     startButton: "Mulai Rekam 5 Batuk",
   },
+  outOfRange: {
+    title: "Alat ini dirancang untuk orang dewasa.",
+    body: "Untuk anak atau remaja yang batuk lebih dari 2 minggu, ajak ke puskesmas untuk diperiksa.",
+    findClinicButton: "Cari puskesmas terdekat",
+    backToStartButton: "Kembali ke awal",
+  },
   record: {
-    title: "Merekam Batuk",
-    subtitle: "Batuk keras ke mikrofon. Target: 5 batuk.",
-    recording: "Merekam...",
+    title: "Tahap Rekam Batuk",
+    subtitle: "Sekarang, Rekam Batukmu",
+    hint: "Batuk sebanyak 5 kali dengan klik tombol rekam. Suara batuk harus terdengar jelas.",
+    recording: "Sedang merekam {n} dari 5 batuk",
     stopButton: "Hentikan & Kirim",
-    coughCountLabel: "Batuk terdeteksi:",
     qualityHint: "Batuk terlalu pelan atau terlalu dekat akan ditolak.",
+    calibratingTitle: "Kalibrasi Mikrofon",
+    calibratingSubtitle: "Diamkan sebentar, lalu coba batuk 1-2 kali untuk latihan.",
+    calibratingProgress: "Mempelajari suara lingkungan...",
+    calibratingCoughHint: "Coba batuk sekarang",
     errorMicPermission: "Izin mikrofon ditolak. Buka pengaturan browser.",
     errorMicNotFound: "Mikrofon tidak ditemukan.",
     errorAudioContext: "Gagal memulai audio. Coba refresh halaman.",
+    /** Maps the stable codes from useRecorder.toRecorderErrorCode to UI text. */
+    recorderErrors: {
+      mic_permission: "Izin mikrofon ditolak. Buka pengaturan browser.",
+      mic_not_found: "Mikrofon tidak ditemukan.",
+      audio_context: "Gagal memulai audio. Coba refresh halaman.",
+    },
     errorDuration: "Rekaman terlalu pendek. Minimal 3 detik.",
     errorNoCough: "Tidak ada batuk terdeteksi. Coba lagi.",
+    calibratingButton: "Kalibrasi...",
+  },
+  recordConfirm: {
+    title: "Batuk anda sudah terekam!",
+    subtitle: "Kami bisa mendengar anda dengan baik. Ingin melihat hasilnya?",
+    rerecordButton: "Rekam ulang",
+    seeResultButton: "Lihat hasil",
   },
   qualityCheck: {
     title: "Memeriksa Kualitas Rekaman",
@@ -79,45 +153,85 @@ export const copy = {
     errorLowQuality: "Kualitas tidak memenuhi syarat. Silakan rekam ulang.",
     errorClipping: "Audio terpotong (clipping). Jauhkan mikrofon, coba lagi.",
     errorNoise: "Derau terlalu besar. Cari tempat lebih tenang, coba lagi.",
+    failTitle: "Kualitas tidak memenuhi syarat",
     rerecordButton: "Rekam Ulang",
     continueButton: "Lanjut Analisis",
   },
   analyze: {
-    title: "Menganalisis",
-    subtitle: "Memproses audio dan gejala...",
+    title: "Tunggu sebentar, ya.",
+    subtitle: "Kami sedang memproses hasil dari tes batuk kamu untuk mendapatkan data.",
     processing: "Mohon tunggu, ini hanya beberapa detik.",
     errorModelUnavailable: "Model tidak tersedia. Coba lagi nanti.",
     errorInference: "Gagal menganalisis. Coba rekam ulang.",
     errorNetwork: "Gagal terhubung ke server. Periksa koneksi.",
     errorValidation: "Data tidak valid. Coba mulai dari awal.",
+    steps: [
+      "Memotong suara batuk",
+      "Membaca pola suara",
+      "Menggabungkan dengan gejala Anda",
+    ],
+    errorTitle: "Gagal Menganalisis",
+    backToRecordButton: "Kembali ke Rekam",
   },
   result: {
-    title: "Hasil Skrining",
+    title: "Hasil Tes Batuk",
+    subtitle: "Lihat hasil tes batuk anda",
+    findClinicButton: "Cek puskesmas terdekat",
+    hemoptysisBanner: "Batuk berdarah perlu diperiksa secepatnya.",
+    recheckButton: "Cek ulang",
+    whyButton: "Kenapa hasilnya ini?",
     tierA: {
       label: "Tier A",
-      text: "Segera periksa dahak (1-2 hari)",
-      description: "Berdasarkan gejala dan pola batuk, Anda disarankan segera memeriksa dahak ke fasilitas kesehatan.",
+      text: "Segera periksa dahak!",
+      description:
+        "Berdasarkan pola batuk dan gejala anda, disarankan segera memeriksa dahak ke fasilitas kesehatan.",
     },
     tierB: {
       label: "Tier B",
-      text: "Periksa dahak minggu ini",
-      description: "Berdasarkan gejala dan pola batuk, Anda disarankan memeriksa dahak dalam minggu ini.",
+      text: "Cek dahak minggu ini!",
+      description:
+        "Berdasarkan pola batuk anda, disarankan tes dahak minggu ini.",
     },
     tierC: {
       label: "Tier C",
       text: "Tetap periksa dahak",
-      description: "Meski risiko relatif lebih rendah, pemeriksaan dahak tetap disarankan untuk memastikan.",
+      description:
+        "Meski risiko relatif lebih rendah, pemeriksaan dahak tetap disarankan untuk memastikan.",
     },
-    whyButton: "Mengapa hasil ini?",
-    nextStepsButton: "Langkah berikutnya",
+    disclaimer: "Hasil ini merupakan skrining awal, bukan diagnosis medis.",
+    whyIntro: "Alasan dari hasil batuk dan gejala",
+    reasons: {
+      cough: {
+        title: "Batuk lebih dari 2 minggu",
+        body: "Batuk yang berlangsung lama perlu untuk diperiksa lebih lanjut.",
+      },
+      fever: {
+        title: "Demam",
+        body: "Demam yang disertai batuk bisa menjadi tanda adanya infeksi.",
+      },
+      nightSweats: {
+        title: "Berkeringat pada malam hari",
+        body: "Keringat berlebihan saat tidur, meskipun udara tidak panas, merupakan gejala yang perlu diperhatikan.",
+      },
+    },
   },
   why: {
-    title: "Mengapa Hasil Ini?",
-    subtitle: "Penjelasan faktor yang memengaruhi tier Anda.",
+    title: "Kenapa hasilnya ini?",
+    subtitle: "Alasan dari hasil batuk dan gejala.",
+    symptomLabels: {
+      fever: "Demam",
+      night_sweats: "Keringat malam",
+      weight_loss: "Berat badan turun",
+      hemoptysis: "Batuk darah",
+      chest_pain: "Nyeri dada",
+      fatigue: "Lelah berlebihan",
+      smoking: "Merokok",
+    },
     symptomContributionTitle: "Kontribusi Gejala",
     audioContributionTitle: "Kontribusi Pola Batuk",
     gradcamTitle: "Area Paling Mempengaruhi Model",
-    gradcamNote: "Area ini menunjukkan bagian spektrogram yang paling memengaruhi keluaran model, bukan tanda penyakit.",
+    gradcamNote:
+      "Area ini menunjukkan bagian spektrogram yang paling memengaruhi keluaran model, bukan tanda penyakit.",
     limitationsTitle: "Batasan",
     limitations: [
       "Model ini bukan diagnosis medis.",
@@ -129,18 +243,24 @@ export const copy = {
   },
   nextSteps: {
     title: "Langkah Berikutnya",
+    checklistTitle: "Yang perlu disiapkan",
     checklist: [
       "Datang ke puskesmas atau fasilitas kesehatan yang menyediakan pemeriksaan dahak (TCM / mikroskopis).",
       "Bawa hasil skrining ini sebagai referensi (bisa screenshot).",
       "Petugas akan meminta Anda mengeluarkan dahak untuk diperiksa.",
-      "Hasil pemeriksaan dahak adalah penentu diagnosis, bukan aplikasi ini.",
+      "Pemeriksaan dahak yang menentukan hasilnya. Hasil aplikasi ini bukan diagnosis.",
     ],
+    clinicSentenceTitle: "Kalimat untuk petugas",
+    copyLabel: "Salin",
     clinicSentence: "Saya batuk lebih dari 2 minggu dan ingin memeriksa dahak untuk TBC.",
+    shareMessage: "Saya batuk lebih dari 2 minggu dan akan memeriksakan dahak ke puskesmas. Boleh temani saya?",
+    copiedToClipboard: "Teks disalin ke clipboard",
     examInfo: "Pemeriksaan dahak (TCM) gratis di puskesmas dan rumah sakit pemerintah.",
     supportText: "Butuh bantuan mencari fasilitas? Hubungi Dinas Kesehatan setempat.",
     costInfo: "Pemeriksaan dahak dan pengobatan TBC gratis di fasilitas BPJS Kesehatan.",
   },
   howItWorks: {
+    notEvaluated: "Belum dievaluasi",
     title: "Cara Kerja & Bukti",
     sections: [
       {
@@ -169,7 +289,7 @@ export const copy = {
       },
       {
         heading: "Sumber",
-        body: "Kode sumber: https://github.com/tbcare/tbcare. Dataset CODA-TB: DREAM Challenge. Referensi model: model_card.json.",
+        body: "Kode sumber: https://github.com/alfar1zi/TUBRA. Dataset CODA-TB: DREAM Challenge. Referensi model: model_card.json.",
       },
     ],
     metricsTable: {
@@ -218,5 +338,6 @@ export const copy = {
     close: "Tutup",
     retry: "Coba Lagi",
     cancel: "Batal",
+    restartConfirm: "Mulai dari awal? Semua jawaban dan rekaman akan dihapus.",
   },
 } as const;
