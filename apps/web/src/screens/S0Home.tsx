@@ -1,72 +1,98 @@
-import { Button } from "@/components";
 import { copy } from "@/copy";
+import { MobileShell } from "@/components";
 
-interface S0HomeProps {
+/**
+ * S0Home reproduces the Figma home frame (4:101): a full-bleed hero photo with
+ * white gradient scrims top and bottom, the TUBRA wordmark top-centre, the
+ * headline over the top scrim, and the subtitle + primary CTA sitting on the
+ * bottom scrim.
+ *
+ * The hero art is a single pre-composited image (base photo + top scrim +
+ * subject cutout + bottom scrim, baked from the Figma nodes in that layer
+ * order) rather than four live layers. Compositing in the browser produced a
+ * visible horizontal seam where the base photo's edge met the scrims; one
+ * image has no internal edges to misalign.
+ *
+ * Responsiveness: the image is anchored TOP and drawn with object-cover
+ * object-top, so the subject always keeps the same crop and position and only
+ * the surplus below the fold is clipped. The wordmark/headline anchor to the
+ * top of the frame and the subtitle/CTA anchor to the bottom, with a flexible
+ * spacer between them, so nothing sinks or floats on shorter or taller phones.
+ */
+export interface S0HomeProps {
   onStart: () => void;
-  onHowItWorks: () => void;
-  onPrivacy: () => void;
 }
 
-export function S0Home({ onStart, onHowItWorks, onPrivacy }: S0HomeProps) {
+export function S0Home({ onStart }: S0HomeProps) {
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-10">
-          <h1 className="text-3xl font-bold text-gray-900">{copy.home.title}</h1>
-          <p className="mt-2 text-gray-600">{copy.home.subtitle}</p>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 text-center mb-4">
-            Batuk lebih dari 2 minggu? Jangan ditunda.
-          </h2>
-          <p className="text-gray-600 text-center mb-6">
-            Rekam batuk Anda dan dapatkan saran kapan sebaiknya periksa dahak.
-          </p>
-
-          <div className="space-y-4">
-            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-              <svg className="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div>
-                <p className="font-medium text-gray-900">Sekitar 3 menit</p>
-                <p className="text-sm text-gray-600">Isi gejala dan rekam 5 batuk</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-              <svg className="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-              </svg>
-              <div>
-                <p className="font-medium text-gray-900">Tanpa akun, suara tidak disimpan</p>
-                <p className="text-sm text-gray-600">Data diproses sekali lalu dibuang</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-              <svg className="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div>
-                <p className="font-medium text-gray-900">Bukan diagnosis, hanya saran</p>
-                <p className="text-sm text-gray-600">Hanya pemeriksaan dahak yang memastikan</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <Button size="lg" fullWidth onClick={onStart}>
-            {copy.home.startButton}
-          </Button>
-          <Button variant="ghost" size="md" fullWidth onClick={onHowItWorks}>
-            {copy.home.howItWorksLink}
-          </Button>
-          <Button variant="ghost" size="md" fullWidth onClick={onPrivacy}>
-            {copy.home.privacyLink}
-          </Button>
-        </div>
+    <MobileShell bleed>
+      <div className="absolute inset-0 overflow-hidden">
+        {/* Hero art: 402x874 Figma composite, top-anchored so the subject
+            never zooms or drifts. */}
+        <img
+          src="/design/home-bg.webp"
+          alt=""
+          aria-hidden="true"
+          className="absolute inset-0 h-full w-full object-cover object-top"
+        />
+        {/* Bottom fog: a live layer anchored to the frame bottom (the top fog
+            is baked into the hero art). Keeping it live guarantees the
+            subtitle/CTA keep contrast at any viewport height, and because it
+            is anchored to the bottom it can never drift. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-x-0 bottom-0 h-[300px]"
+          style={{
+            backgroundImage:
+              "linear-gradient(to top, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.65) 40%, rgba(255,255,255,0) 100%)",
+          }}
+        />
       </div>
-    </div>
+
+      {/* Wordmark: logo glyph + TUBRA. In Figma it sits at y=78, i.e. 16px
+          below the 62px status bar. Anchor to the device's real safe-area top
+          instead of a fixed 78px so the row hugs the status bar on every phone
+          (no dead space above) while still clearing the notch. */}
+      <div
+        className="relative flex items-center justify-center gap-1"
+        style={{ paddingTop: "calc(env(safe-area-inset-top, 62px) + 16px)" }}
+      >
+        <img
+          src="/design/logo-glyph.svg"
+          alt=""
+          aria-hidden="true"
+          className="w-[33px] h-[33px]"
+        />
+        <span className="font-display text-[24px] font-semibold leading-[30px] text-text-primary/80">
+          {copy.brand}
+        </span>
+      </div>
+
+      {/* Headline over the top scrim: 312px wide, centred, Geist 24/500. */}
+      <h1 className="relative mt-[16px] mx-auto w-full max-w-[312px] text-center text-[24px] font-medium leading-[31px] text-text-primary/80">
+        {copy.home.title}
+      </h1>
+
+      <div className="flex-1" />
+
+      {/* Subtitle + CTA. Figma ends the CTA 16px above the 34px home
+          indicator, so anchor to the real safe-area bottom instead of a fixed
+          50px to keep the same clearance on every phone. */}
+      <div
+        className="relative px-gutter"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 34px) + 16px)" }}
+      >
+        <p className="text-center text-base font-normal leading-[21px] text-text-primary/80">
+          {copy.home.subtitle}
+        </p>
+        <button
+          type="button"
+          onClick={onStart}
+          className="mt-[16px] w-full h-[58px] rounded-lg bg-gradient-to-b from-brand to-brand-deep text-lg font-medium text-text-inverse transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+        >
+          {copy.home.startButton}
+        </button>
+      </div>
+    </MobileShell>
   );
 }

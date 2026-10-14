@@ -1,57 +1,68 @@
-import { useState } from "react";
-import { Button } from "@/components";
 import { copy } from "@/copy";
+import { MobileShell } from "@/components";
 
-interface S1ConsentProps {
+/**
+ * S1Consent reproduces Figma frame 3:27: the greeting, a card listing what the
+ * session involves, and two full-width actions ("Iya, aku menyetujuinya" /
+ * "Aku tidak setuju"). Agreeing *is* the consent gesture, so there is no
+ * separate checkbox.
+ */
+export interface S1ConsentProps {
   onContinue: () => void;
   onBack: () => void;
 }
 
 export function S1Consent({ onContinue, onBack }: S1ConsentProps) {
-  const [agreed, setAgreed] = useState(false);
-
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <header className="mb-6">
-            <h1 className="text-2xl font-semibold text-gray-900">{copy.consent.title}</h1>
-          </header>
+    <MobileShell>
+      <div className="flex flex-col flex-1">
+        {/* Match the other screens: Figma draws a 62px status bar and places the
+            heading at y=127, so the real content sits 65px below it. Anchoring
+            to the device safe-area top (0 on desktop/notchless) plus that 65px
+            raups the mock status-bar space so there is no dead gap up top, and
+            it stays put on every phone. */}
+        <header style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 65px)" }}>
+          <h1 className="text-[24px] font-medium leading-[31px] text-text-primary/80">{copy.consent.title}</h1>
+          <p className="mt-2 text-base font-normal leading-[21px] text-text-primary/60">{copy.consent.subtitle}</p>
+        </header>
 
-          <div className="space-y-4 mb-6">
-            {copy.consent.body.map((text, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <svg className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <p className="text-gray-700">{text}</p>
-              </div>
-            ))}
-          </div>
+        {/* Frame 1: white card, 1px black rim, r16, 16px padding, 10px rhythm. */}
+        <div className="mt-[39px] rounded-lg border border-black bg-white p-4 space-y-2.5">
 
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={agreed}
-              onChange={(e) => setAgreed(e.target.checked)}
-              className="w-5 h-5 mt-0.5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-              aria-describedby="consent-desc"
-            />
-            <span id="consent-desc" className="text-gray-700">
-              {copy.consent.body[3]}
-            </span>
-          </label>
+          {copy.consent.body.map((text, i) => (
+            <p
+              key={i}
+              className="flex gap-2 text-base font-normal leading-[21px] text-text-primary"
+            >
+              <span aria-hidden="true" className="text-text-primary">
+                {i + 1}.
+              </span>
+              <span className="text-justify">{text}</span>
+            </p>
+          ))}
+        </div>
 
-          <div className="mt-6 space-y-3">
-            <Button size="lg" fullWidth onClick={onContinue} disabled={!agreed}>
-              {copy.consent.agreeButton}
-            </Button>
-            <Button variant="secondary" size="md" fullWidth onClick={onBack}>
-              {copy.consent.disagreeButton}
-            </Button>
-          </div>
+        <div className="flex-1" />
+
+        {/* Frame 2 / Frame 3: agreed y=703, declined y=767, 6px apart, 50px off
+            the bottom edge. */}
+        <div className="pb-[clamp(24px,5.7dvh,50px)] space-y-1.5">
+          <button
+            type="button"
+            onClick={onContinue}
+            className="w-full h-[58px] rounded-lg bg-gradient-to-b from-brand to-brand-deep text-lg font-medium text-text-inverse transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+          >
+            {copy.consent.agreeButton}
+          </button>
+          <button
+            type="button"
+            onClick={onBack}
+            className="w-full h-[57px] rounded-lg bg-brand-soft text-lg font-medium text-brand transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+          >
+            {copy.consent.disagreeButton}
+          </button>
         </div>
       </div>
-    </div>
+    </MobileShell>
   );
 }
