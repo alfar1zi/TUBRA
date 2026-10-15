@@ -2,7 +2,25 @@
 // ("/api/...") and hit the Vite dev proxy locally. When the web app is deployed
 // on its own (for example Vercel) with the API hosted elsewhere, set
 // VITE_API_BASE to the backend origin, e.g. https://tbcare-api.example.com.
-const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
+function resolveApiBase(configured: string | undefined): string {
+  const base = (configured ?? "").replace(/\/+$/, "");
+  if (!base) return "";
+  // Cross-origin backends are blocked from the deployed site: Chrome's Private
+  // Network Access refuses requests from a public origin to a private address
+  // (the Tailscale API), and the Tailscale host does not answer the CORS
+  // preflight, so every screen died with "Gagal terhubung ke server". The
+  // deployed app talks to `/api/*` on its own origin instead, which Vercel
+  // rewrites to the backend (see vercel.json). Only honour an explicit base
+  // that is same-origin, e.g. a local reverse proxy.
+  try {
+    const url = new URL(base, window.location.origin);
+    return url.origin === window.location.origin ? base : "";
+  } catch {
+    return "";
+  }
+}
+
+const API_BASE = resolveApiBase(import.meta.env.VITE_API_BASE);
 
 function apiUrl(path: string): string {
   return `${API_BASE}${path}`;

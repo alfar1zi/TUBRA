@@ -72,6 +72,8 @@ export interface ScreenContext {
   gateData: GateData;
   symptomData: SymptomData;
   recordingData: RecordingData;
+  /** Why the flow was left on S2x: too young, or a cough under two weeks. */
+  outOfRangeReason: "age" | "short_cough";
   analysisResult: AnalysisResult | null;
   demoMode: boolean;
   error: string | null;
@@ -84,6 +86,7 @@ export type ScreenAction =
   | { type: "SET_SYMPTOM_DATA"; data: Partial<SymptomData> }
   | { type: "SET_RECORDING_DATA"; data: Partial<RecordingData> }
   | { type: "SET_ANALYSIS_RESULT"; result: AnalysisResult }
+  | { type: "SET_OUT_OF_RANGE_REASON"; reason: ScreenContext["outOfRangeReason"] }
   | { type: "SET_DEMO_MODE"; enabled: boolean }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "RESET" };
@@ -116,6 +119,7 @@ export const initialContext: ScreenContext = {
     qualityReasons: undefined,
   },
   analysisResult: null,
+  outOfRangeReason: "age",
   demoMode: false,
   error: null,
 };
@@ -134,6 +138,8 @@ export function screenReducer(context: ScreenContext, action: ScreenAction): Scr
       return { ...context, recordingData: { ...context.recordingData, ...action.data } };
     case "SET_ANALYSIS_RESULT":
       return { ...context, analysisResult: action.result };
+    case "SET_OUT_OF_RANGE_REASON":
+      return { ...context, outOfRangeReason: action.reason };
     case "SET_DEMO_MODE":
       return { ...context, demoMode: action.enabled };
     case "SET_ERROR":

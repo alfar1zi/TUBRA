@@ -59,8 +59,19 @@ export function useRecorder() {
   const streamedRef = useRef<boolean>(false);
   /** Fires if no buffer arrives shortly after start (suspended-context guard). */
   const noAudioTimerRef = useRef<number | null>(null);
-  /** True while startRecording is between its first line and settling. */
+  /** True while startRecording is between its first line and going live. */
   const startingRef = useRef<boolean>(false);
+  /** Cleared by stopRecording, so a restarting attempt aborts at its checkpoints. */
+  const attemptActiveRef = useRef<boolean>(false);
+  /** Latest startRecording, for the watchdog's one silent-start restart. */
+  const startRecordingRef = useRef<() => void>();
+  /**
+   * True from the moment a graph is wired until a stop/flush ends it. Unlike
+   * `recording`, it is not reset by React StrictMode's simulated unmount, so a
+   * re-fired auto-start effect cannot claim a second generation and tear down
+   * the graph the first one is still bringing up.
+   */
+  const liveRef = useRef<boolean>(false);
   /** Safety timer for the stop->flush->teardown handshake. */
   const flushTimerRef = useRef<number | null>(null);
   /**
@@ -69,7 +80,11 @@ export function useRecorder() {
    * device really is what the user has.
    */
   const emptyStartCountRef = useRef<number>(0);
+  /** Dev-only `?e2eAudio` player, stopped with the graph it feeds. */
+  const e2ePlayerRef = useRef<AudioBufferSourceNode | null>(null);
   const MAX_EMPTY_STARTS = 2;
+  /** How long a live-looking graph may stay silent before it is restarted. */
+  const NO_AUDIO_TIMEOUT_MS = 5000;
 
   const setOnComplete = useCallback((callback: ((blob: Blob) => void) | null) => {
     onCompleteRef.current = callback;
@@ -99,6 +114,15 @@ export function useRecorder() {
    * the recorded audio.
    */
   const teardown = useCallback(() => {
+    if (e2ePlayerRef.current) {
+      try {
+        e2ePlayerRef.current.stop();
+      } catch {
+        // Already stopped, or the context closed first.
+      }
+      e2ePlayerRef.current.disconnect();
+      e2ePlayerRef.current = null;
+    }
     if (sourceNodeRef.current) {
       sourceNodeRef.current.disconnect();
       sourceNodeRef.current = null;
@@ -128,19 +152,23 @@ export function useRecorder() {
       flushTimerRef.current = null;
     }
     recordingRef.current = false;
+    liveRef.current = false;
     setState((s) => ({ ...s, recording: false }));
   }, []);
 
   const stopRecording = useCallback(() => {
-    // Supersede any in-flight startRecording() so its async continuation stops
-    // touching the mic once it resumes after an await.
-    startGenerationRef.current += 1;
     startingRef.current = false;
 
     // If a graph is live, ask the worklet to flush and let its "complete"
     // message drive the teardown, so the final buffer is not lost. A safety
     // timer tears down anyway if the message never arrives (e.g. the worklet
     // was already gone).
+    //
+    // The generation is NOT bumped here. `isStale()` decides whether that
+    // "complete" still belongs to the live take; bumping it first marked every
+    // deliberately stopped take as stale, so its audio was thrown away and the
+    // app never left the record screen. `teardown()` bumps it once the flush is
+    // done, which is what supersedes an in-flight start.
     if (workletNodeRef.current && mediaStreamRef.current) {
       workletNodeRef.current.port.postMessage("stop");
       if (flushTimerRef.current !== null) window.clearTimeout(flushTimerRef.current);
@@ -150,24 +178,35 @@ export function useRecorder() {
       }, 800);
       return;
     }
+    // Nothing to flush: a stop that raced a start still in flight. Supersede it
+    // so its async continuation stops touching the mic once it resumes.
+    startGenerationRef.current += 1;
+    attemptActiveRef.current = false;
     teardown();
   }, [teardown]);
 
   stopRecordingRef.current = stopRecording;
 
-  const startRecording = useCallback(async () => {
+  const startRecordingImpl = async () => {
+    // Starting a take that is already coming up or already live is the answer
+    // to a second request. Callers fire this from effects that can re-run (the
+    // record screen's auto-start, React StrictMode's remount); letting each
+    // call claim a new generation made the second one bump the token the first
+    // was still using, so the take was torn down before a single buffer
+    // arrived.
+    if (startingRef.current || recordingRef.current || liveRef.current) return;
     // Claim this attempt's token. Any previous in-flight start now sees a
     // newer generation and releases itself at its next checkpoint, so the two
-    // never both hold a live mic graph. `startingRef` additionally suppresses
-    // a *synchronous* second call before the first has claimed its token.
-    if (startingRef.current) return;
+    // never both hold a live mic graph.
     startingRef.current = true;
+    attemptActiveRef.current = true;
     const generation = (startGenerationRef.current += 1);
     streamedRef.current = false;
     setState((s) => ({ ...s, error: null, audioBlob: null }));
 
     // True once a newer start (or stopRecording) has superseded this attempt.
-    const isStale = (): boolean => generation !== startGenerationRef.current;
+    const isStale = (): boolean =>
+      generation !== startGenerationRef.current || !attemptActiveRef.current;
 
     // Releases only the handles *this* attempt acquired. It must never touch
     // the shared refs, because a superseded attempt would otherwise close the
@@ -243,12 +282,14 @@ export function useRecorder() {
         return;
       }
 
+      liveRef.current = true;
       const source = audioContext.createMediaStreamSource(stream);
       sourceNodeRef.current = source;
       const workletNode = new AudioWorkletNode(audioContext, "recorder-processor");
       workletNodeRef.current = workletNode;
 
       source.connect(workletNode);
+
       // The worklet must be connected to the destination so the graph keeps
       // pulling render quanta, but connecting it directly plays the live mic
       // through the speakers (a loud feedback howl on a laptop). Route it
@@ -272,9 +313,41 @@ export function useRecorder() {
         },
       }));
 
-      workletNode.port.onmessage = (e) => {
+      // Dev-only test hook. No fake capture device can play a file through the
+      // microphone, so `?e2eAudio=/take.wav` is decoded and fed straight into
+      // the worklet's own input, exactly where the microphone's samples
+      // arrive. Vite's dead-code elimination strips this from production.
+      const e2eAudio = import.meta.env.DEV
+        ? new URLSearchParams(window.location.search).get("e2eAudio")
+        : null;
+      const startE2eAudio = () => {
+        if (!e2eAudio) return;
+        void fetch(e2eAudio)
+          .then((response) => response.arrayBuffer())
+          .then((buffer) => audioContext.decodeAudioData(buffer))
+          .then(async (decoded) => {
+            await audioContext.resume().catch(() => undefined);
+            // StrictMode mounts the screen twice: the first graph is torn down
+            // and its context closed before this fetch resolves. Starting a
+            // player on that dead context left the live graph with a silent
+            // input, so the take never progressed past calibration.
+            if (audioContext.state !== "running" || isStale()) return;
+            const player = audioContext.createBufferSource();
+            // Loop it: a real microphone is a continuous source, so a single
+            // pass would end the take the moment the file ran out.
+            player.loop = true;
+            player.buffer = decoded;
+            player.connect(workletNode);
+            player.start();
+            e2ePlayerRef.current = player;
+          })
+          .catch(() => {
+            // Keep the silent take going; the screen decides what to show.
+          });
+      };
+
+      const handler = (e: MessageEvent) => {
         if (e.data.type === "stream") {
-          // Live audio buffer for real-time visualization and cough counting.
           // Its arrival is the proof the graph is actually running.
           streamedRef.current = true;
           setState((s) => ({ ...s, audioBuffer: e.data.data }));
@@ -291,14 +364,6 @@ export function useRecorder() {
           const wavBuffer = encodeWAV(int16Array, audioContext.sampleRate);
           const blob = new Blob([wavBuffer], { type: "audio/wav" });
 
-          recordingRef.current = false;
-          setState((s) => ({
-            ...s,
-            recording: false,
-            duration: 5,
-            audioBlob: blob,
-            audioBuffer: float32Array,
-          }));
           // A flush also arrives when React unmounts the screen (StrictMode
           // re-mounts every effect once in the deployed build too): the
           // cleanup posts "stop" and the worklet replays whatever it has,
@@ -306,10 +371,25 @@ export function useRecorder() {
           // take sent users straight to the quality screen with a ~10 ms
           // "recording", which the API then rejected as inaudible. Only
           // deliver a flush for a take that is still live and not superseded.
-          if (!recordingRef.current || isStale()) {
+          //
+          // This test must run BEFORE `recordingRef` is cleared: it used to
+          // run after, so `!recordingRef.current` was always true, every take
+          // was thrown away with a teardown, and "Lihat hasil" never reached
+          // the result screen.
+          const isLive = recordingRef.current && !isStale();
+          recordingRef.current = false;
+          if (!isLive) {
+            setState((s) => ({ ...s, recording: false }));
             teardown();
             return;
           }
+          setState((s) => ({
+            ...s,
+            recording: false,
+            duration: 5,
+            audioBlob: blob,
+            audioBuffer: float32Array,
+          }));
           emptyStartCountRef.current = 0;
           onCompleteRef.current?.(blob);
           // The flush handshake is done: release the graph now (this also
@@ -317,30 +397,43 @@ export function useRecorder() {
           teardown();
         }
       };
+      workletNode.port.addEventListener("message", handler);
+      workletNode.port.start();
       workletNode.port.postMessage("start");
+      startE2eAudio();
+      // Anchor the clock for this take. `updateDuration` compares it against
+      // MAX_RECORDING_SECONDS to auto-stop; leaving it at 0 made the elapsed
+      // time the whole Unix epoch, so the very first frame called
+      // stopRecording and every take died in ~16 ms. That is why "Lihat hasil"
+      // never reached the result screen.
+      startTimeRef.current = Date.now();
       recordingRef.current = true;
       setState((s) => ({ ...s, recording: true, duration: 0 }));
+      startingRef.current = false;
       animationFrameRef.current = requestAnimationFrame(updateDuration);
 
       // Watchdog: a running graph streams a buffer every ~100ms. If nothing
-      // arrives the graph observed is not delivering audio: the context is
-      // suspended (autoplay policy), or the worklet's input has no channels
-      // (a device that publishes an empty capture, such as a virtual or fake
-      // mic). Without this the screen claims to be calibrating forever. The
-      // retry budget keeps a genuinely recoverable device alive while making
-      // sure an empty one surfaces a clear error instead of an endless loop
-      // of silent restarts.
+      // arrives for this long the graph is not delivering audio: the context
+      // is suspended (autoplay policy), or the worklet's input has no
+      // channels (a device that publishes an empty capture, such as a virtual
+      // or fake mic). The window is deliberately generous (a phone starting
+      // cold can take seconds) because a false stop is far worse than a slow
+      // start: it kills a take that was about to work. One silent start is
+      // retried with a fresh graph; a second one reports a clear error
+      // instead of leaving the screen calibrating forever.
       noAudioTimerRef.current = window.setTimeout(() => {
         if (!recordingRef.current || streamedRef.current) return;
-        stopRecordingRef.current?.();
         emptyStartCountRef.current += 1;
-        if (emptyStartCountRef.current >= MAX_EMPTY_STARTS) {
-          setState((s) => ({ ...s, error: "no_audio", recording: false }));
+        if (emptyStartCountRef.current < MAX_EMPTY_STARTS) {
+          stopRecordingRef.current?.();
+          window.setTimeout(() => void startRecordingRef.current?.(), 0);
+          return;
         }
-      }, 1500);
-
-      startingRef.current = false;
+        teardown();
+        setState((s) => ({ ...s, error: "no_audio", recording: false }));
+      }, NO_AUDIO_TIMEOUT_MS);
     } catch (err) {
+      attemptActiveRef.current = false;
       // Release anything already acquired (mic track, AudioContext, worklet)
       // so a failed start does not leak a live microphone.
       stopRecordingRef.current?.();
@@ -351,7 +444,16 @@ export function useRecorder() {
       teardown();
       setState((s) => ({ ...s, error: errorMsg, recording: false }));
     }
-  }, [teardown, updateDuration]);
+  };
+
+  // Nothing inside startRecording changes for the life of the hook, so its
+  // identity must not either. When it did (it depended on the two callbacks
+  // above), every effect in the record screen that lists it re-ran, and that
+  // effect's cleanup stopped the take that had just started: the recorder
+  // died within a second and the screen showed the pre-record state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- startRecordingImpl only touches stable helpers
+  const startRecording = useCallback(() => startRecordingImpl(), []);
+  startRecordingRef.current = startRecording;
 
   useEffect(() => {
     return () => {

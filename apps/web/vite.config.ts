@@ -19,8 +19,12 @@ export default defineConfig({
     allowedHosts: [".ts.net"],
     proxy: {
       "/api": {
-        target: "http://localhost:8080",
+        // Local Flask by default. Point VITE_PROXY_TARGET at a deployed API to
+        // exercise the full screen from the dev server when the model is not
+        // installed locally (it only lives in the container image).
+        target: process.env.VITE_PROXY_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
+        secure: true,
       },
     },
   },

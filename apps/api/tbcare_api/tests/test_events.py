@@ -332,3 +332,74 @@ def test_detect_cough_events_long_cough_rejected():
 
     # Should be rejected because duration > max_cough_duration_s
     assert len(events) == 0
+
+def _tone(duration_s: float, freq: float, amp: float, sample_rate: int = 16000) -> np.ndarray:
+    t = np.arange(int(duration_s * sample_rate)) / sample_rate
+    return (amp * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+
+
+def _band_burst(duration_s: float, amp: float, sample_rate: int = 16000, seed: int = 7) -> np.ndarray:
+    """A cough-shaped burst: band-limited noise with a sharp attack and decay."""
+    from scipy import signal as _signal
+
+    rng = np.random.default_rng(seed)
+    n = int(duration_s * sample_rate)
+    burst = rng.normal(0, 0.5, n)
+    band = _signal.butter(
+        4, [300 / (sample_rate / 2), 5000 / (sample_rate / 2)], btype="band", output="sos"
+    )
+    burst = _signal.sosfilt(band, burst)
+    burst = burst / (np.max(np.abs(burst)) + 1e-12)
+    envelope = np.exp(-np.arange(n) / (0.05 * sample_rate)) * np.minimum(
+        1.0, np.arange(n) / (0.005 * sample_rate)
+    )
+    return (burst * envelope * amp).astype(np.float32)
+
+
+def _room(duration_s: float, level: float = 0.004, seed: int = 11) -> np.ndarray:
+    return np.random.default_rng(seed).normal(0, level, int(duration_s * 16000)).astype(np.float32)
+
+
+@pytest.mark.parametrize(
+    "name, freq, second_harmonic",
+    [
+        ("music-440hz", 440.0, 0.0),
+        ("hum-220hz", 220.0, 0.0),
+        ("voiced-speech-shape", 140.0, 0.55),
+        ("snore-110hz", 110.0, 0.0),
+    ],
+)
+def test_spectral_gate_rejects_steady_sounds(name, freq, second_harmonic):
+    """Steady tones, voice-shaped harmonics and snores are not coughs.
+
+    These are the sounds the phone hears while the user waits to cough. The
+    gate keeps them out by requiring a centroid a cough burst has and a tail
+    that falls away from the peak.
+    """
+    sr = 16000
+    audio = _room(3.0)
+    sound = _tone(1.6, freq, 0.4)
+    if second_harmonic:
+        sound = sound + _tone(1.6, freq * 2, 0.4 * second_harmonic)
+    sound = sound * np.hanning(len(sound)).astype(np.float32)
+    audio[int(0.8 * sr): int(0.8 * sr) + len(sound)] += sound
+    events, _, _ = detect_cough_events(audio, sr)
+    assert events == []
+
+
+def test_a_burst_longer_than_a_cough_is_not_split_into_coughs():
+    """A sustained sound stays one stretch and is rejected whole.
+
+    Splitting a long stretch into one-cough windows turned a held note into a
+    row of bursts short enough to pass, so a loud room or a long vowel could
+    be counted. A cough buried in speech of the same loudness is a known
+    limit: it is not reported rather than risking counts of non-coughs.
+    """
+    sr = 16000
+    audio = _room(4.0, level=0.002)
+    speech = _tone(2.6, 150, 0.18) + _tone(2.6, 300, 0.09)
+    audio[int(0.5 * sr): int(0.5 * sr) + len(speech)] += speech
+    cough = _band_burst(0.25, 2.0)
+    audio[int(1.3 * sr): int(1.3 * sr) + len(cough)] += cough
+    events, _, _ = detect_cough_events(audio, sr)
+    assert events == []

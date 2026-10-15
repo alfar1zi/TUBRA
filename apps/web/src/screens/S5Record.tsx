@@ -5,7 +5,10 @@ import { MobileShell, WaveformCanvas, RecordButton } from "@/components";
 import { copy } from "@/copy";
 
 interface S5RecordProps {
-  onComplete: (audioBlob: Blob, coughData: { count: number; events: Array<{startMs: number, endMs: number}> }) => void;
+  onComplete: (
+    audioBlob: Blob,
+    coughData: { count: number; events: Array<{ startMs: number; endMs: number }>; peakAmplitude: number }
+  ) => void;
   onBack: () => void;
 }
 
@@ -37,6 +40,7 @@ export function S5Record({ onComplete, onBack }: S5RecordProps) {
     reset: resetCoughCounter,
     calibrationPhase,
     calibrationProgress,
+    peakAmplitude,
     energyDb,
     noiseFloorDb,
     thresholdHi,
@@ -113,9 +117,9 @@ export function S5Record({ onComplete, onBack }: S5RecordProps) {
       if (cancelledRef.current) return;
       // The take is over: keep the auto-start effect from beginning another.
       doneRef.current = true;
-      onComplete(blob, { count: coughCount, events });
+      onComplete(blob, { count: coughCount, events, peakAmplitude });
     });
-  }, [coughCount, events, onComplete, setOnComplete]);
+  }, [coughCount, events, peakAmplitude, onComplete, setOnComplete]);
 
   const isCalibrating = calibrationPhase === "calibrating";
 
@@ -136,9 +140,20 @@ export function S5Record({ onComplete, onBack }: S5RecordProps) {
             {isCalibrating ? copy.record.calibratingSubtitle : copy.record.hint}
           </p>
           {recorderError && (
-            <p className="mt-[12px] text-base font-medium leading-[21px] text-danger" role="alert">
-              {recorderError}
-            </p>
+            <div className="mt-[12px] flex flex-col items-center gap-2">
+              <p className="text-base font-medium leading-[21px] text-danger" role="alert">
+                {recorderError}
+              </p>
+              {!state.recording && (
+                <button
+                  type="button"
+                  onClick={handleRecord}
+                  className="h-[44px] rounded-lg bg-brand-soft px-4 text-base font-medium text-brand transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+                >
+                  {copy.record.retryButton}
+                </button>
+              )}
+            </div>
           )}
         </header>
 
@@ -174,6 +189,9 @@ export function S5Record({ onComplete, onBack }: S5RecordProps) {
                   style={{ width: `${calibrationProgress * 100}%` }}
                 />
               </div>
+              <p className="mt-2 text-xs font-normal text-text-primary/60">
+                {copy.record.calibratingSlow}
+              </p>
             </div>
           )}
 

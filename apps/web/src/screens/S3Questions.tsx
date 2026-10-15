@@ -59,7 +59,7 @@ export interface S3QuestionsProps {
   onComplete: () => void;
   onBack: () => void;
   /** Called when the user has been coughing for less than two weeks. */
-  onOutOfRange: () => void;
+  onOutOfRange: (reason: "age" | "short_cough") => void;
 }
 
 export function S3Questions({
@@ -173,7 +173,7 @@ export function S3Questions({
                 gateData.coughDuration === coughDurationMap[key as keyof typeof coughDurationMap];
               const handleSelect = () => {
                 if (key === "lt2w") {
-                  onOutOfRange();
+                  onOutOfRange("short_cough");
                 } else {
                   onGateChange({ coughDuration: coughDurationMap[key as keyof typeof coughDurationMap] });
                 }

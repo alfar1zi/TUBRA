@@ -151,8 +151,9 @@ export function S7Analyze({
   onCancel,
 }: S7AnalyzeProps) {
   const [currentStep, setCurrentStep] = useState(0);
-  const [timedOut, setTimedOut] = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  /** Bumped by the retry button to run the request again. */
+  const [attempt, setAttempt] = useState(0);
 
   // buildScreenPayload returns a fresh object each render; memoise it so the
   // effect below does not re-run (and re-POST) on every render.
@@ -161,7 +162,7 @@ export function S7Analyze({
     [_gateData, _symptomData]
   );
   // Keep the latest callbacks in refs so the effect can list them without
-  // re-running; the request must fire exactly once per mount.
+  // re-running; the request must fire exactly once per attempt.
   const onResultRef = useRef(onResult);
   const onQualityFailRef = useRef(onQualityFail);
   const onErrorRef = useRef(onError);
@@ -174,6 +175,8 @@ export function S7Analyze({
     // Guarantees only ONE terminal callback (result | quality-fail | error)
     // even if the timeout and the request race.
     let settled = false;
+    setFailure(null);
+    setCurrentStep(0);
 
     const finish = () => {
       if (settled) return false;
@@ -189,30 +192,25 @@ export function S7Analyze({
       } catch (err) {
         if (!mounted || !finish()) return;
 
-        if (err instanceof ScreenApiError) {
-          const mapped = mapApiErrorToFrontend(err);
-
-          if (err.code === "quality_failed" && mapped.qualityData) {
-            // Quality check failed - show S6QualityCheck with real details
-            onQualityFailRef.current({
-              ...mapped.qualityData,
-              errorCode: mapped.frontendCode,
-            });
-          } else {
-            // Other API errors
-            setApiError(mapped.frontendCode);
-            onErrorRef.current(mapped.frontendCode);
-          }
-        } else if (err instanceof TypeError && err.message.includes("fetch")) {
-          // Network error
-          setApiError("network");
-          onErrorRef.current("network");
-        } else {
-          // Unknown error
-          const errorCode = err instanceof Error ? err.message : "generic";
-          setApiError(errorCode);
-          onErrorRef.current(errorCode);
+        const mapped = err instanceof ScreenApiError ? mapApiErrorToFrontend(err) : null;
+        if (err instanceof ScreenApiError && err.code === "quality_failed" && mapped?.qualityData) {
+          // The take itself is unusable: send it back to the confirmation
+          // screen, which explains every failed check and offers a re-record.
+          onQualityFailRef.current({
+            ...mapped.qualityData,
+            errorCode: mapped.frontendCode,
+          });
+          return;
         }
+
+        // Transport failures (network, CORS/PNA block, timeout, 5xx, model not
+        // warm) say nothing about the take. Keep the user here with a clear
+        // message and a retry: bouncing them to the confirmation screen made
+        // "Lihat hasil" look broken and lost the recording they just made.
+        const code = mapped ? mapped.frontendCode : "network";
+        onErrorRef.current(code);
+        if (!mounted) return;
+        setFailure(code);
       }
     };
 
@@ -220,9 +218,9 @@ export function S7Analyze({
 
     const timer = window.setTimeout(() => {
       if (!mounted || !finish()) return;
-      setTimedOut(true);
-      onErrorRef.current("E10"); // timeout
-    }, 20000);
+      onErrorRef.current("E10");
+      setFailure("E10"); // timeout
+    }, 45000);
 
     const stepTimer = window.setInterval(() => {
       setCurrentStep((prev) => Math.min(prev + 1, STEPS.length - 1));
@@ -233,27 +231,37 @@ export function S7Analyze({
       window.clearTimeout(timer);
       window.clearInterval(stepTimer);
     };
-  }, [audioBlob, payload]);
+  }, [audioBlob, payload, attempt]);
 
-  if (timedOut || apiError) {
+  if (failure) {
+    const message =
+      copy.analyze.failureMessages[failure as keyof typeof copy.analyze.failureMessages] ??
+      copy.analyze.errorInference;
     return (
       <MobileShell>
-        <div
-          className="flex flex-col flex-1 justify-center items-center text-center"
-          style={{
-            paddingTop: "env(safe-area-inset-top, 0px)",
-            paddingBottom: "env(safe-area-inset-bottom, 0px)",
-          }}
-        >
-          <Banner variant="warning" title={copy.analyze.errorTitle}>
-            <p>{copy.analyze.errorInference}</p>
-          </Banner>
-          <div className="mt-6 w-full space-y-3">
-            <Button size="lg" fullWidth onClick={onCancel}>
-              {copy.analyze.backToRecordButton}
+        <div className="flex flex-col flex-1">
+          <div
+            className="text-center"
+            style={{ paddingTop: "calc(env(safe-area-inset-top, 62px) + 48px)" }}
+          >
+            <h1 className="text-[22px] font-medium leading-[29px] text-text-primary/80">
+              {copy.analyze.errorTitle}
+            </h1>
+            <div className="mt-4 text-left">
+              <Banner variant="warning" title={copy.analyze.errorTitle}>
+                <p>{message}</p>
+              </Banner>
+            </div>
+          </div>
+          <div
+            className="mt-auto space-y-3 pt-8"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 34px) + 13px)" }}
+          >
+            <Button size="lg" fullWidth className="h-[58px]" onClick={() => setAttempt((n) => n + 1)}>
+              {copy.analyze.retryButton}
             </Button>
-            <Button variant="secondary" size="md" fullWidth onClick={onCancel}>
-              {copy.common.back}
+            <Button variant="secondary" size="md" fullWidth className="h-[57px]" onClick={onCancel}>
+              {copy.analyze.backToRecordButton}
             </Button>
           </div>
         </div>
@@ -272,23 +280,29 @@ export function S7Analyze({
           paddingBottom: "env(safe-area-inset-bottom, 0px)",
         }}
       >
-        {/* Figma (frame 20:610, group 27:657): a 100px ring, 14.5px thick
-            (#E1E1E1 track) with a taupe (#B3A8A8) arc covering ~81% of the
-            circle, rotating. */}
+        {/* A ring with an even track and one clearly rounded arc, rotating at a
+            constant speed. The previous shape was an open path whose gap made
+            the rotation read as a wobble; a dash with round caps and a longer
+            drawn length gives a clean, obviously-loading spinner. */}
         <svg
-          className="w-[100px] h-[100px] animate-spin"
+          className="h-[100px] w-[100px] animate-spin text-brand-soft"
           viewBox="0 0 100 100"
           role="status"
           aria-live="polite"
           aria-label={copy.analyze.title}
+          style={{ animationDuration: "900ms" }}
         >
-          <circle cx="50" cy="50" r="42.75" fill="none" stroke="#E1E1E1" strokeWidth="14.5" />
-          <path
-            d="M88.5 23.5 A42.75 42.75 0 1 0 92.13 65.9"
+          <circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" strokeWidth="12" />
+          <circle
+            cx="50"
+            cy="50"
+            r="42"
             fill="none"
             stroke="#B3A8A8"
-            strokeWidth="14.5"
+            strokeWidth="12"
             strokeLinecap="round"
+            strokeDasharray="176 264"
+            transform="rotate(-90 50 50)"
           />
         </svg>
         <div>

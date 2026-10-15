@@ -13,8 +13,33 @@ interface LiveCoughCounterConfig {
   /** Stage-2 spectral gate: mirror of the server's AudioConfig defaults. */
   useSpectralGate: boolean;
   minSpectralCentroidHz: number;
-  minZeroCrossingRate: number;
+  /**
+   * Longest burst accepted as one cough, far shorter than the config ceiling.
+   * Measured on the CODA-TB coughs (160 recordings) every cough burst ran
+   * 12-17 frames, while speech, a held note and a snore run 39-49 frames and
+   * a finger tap 2. Keeping the burst inside 6-28 frames is what separates
+   * them; spectral features alone did not (a third of real coughs have a
+   * zero-crossing rate as high as a hand clap).
+   */
+  maxBurstFrames: number;
+  /**
+   * Upper bound on the zero-crossing rate, shape check only. It is not the
+   * separator it was once assumed to be: 31% of real cough recordings exceed
+   * 0.34, so this stays loose and the burst length does the work.
+   */
   maxZeroCrossingRate: number;
+  /**
+   * Extra margin over the calibrated floor, as a fraction of its dynamic
+   * range. The take starts with ~1 s of calibration audio and keeps running
+   * on the same floor, but a browser capture is not the pre-processed signal
+   * the server sees: Chrome may later route audio through echo processing and
+   * the room changes when the phone is brought to the mouth. A too-low floor
+   * then counts every breath as a cough. Raising the trigger by this share of
+   * (loudest frame - floor), capped by `maxAdaptiveMarginDb`, keeps real
+   * coughs (20-30 dB over the room) while rejecting breathing.
+   */
+  adaptiveMarginRatio: number;
+  maxAdaptiveMarginDb: number;
 }
 
 interface CoughEvent {
@@ -29,14 +54,16 @@ const DEFAULT_CONFIG: LiveCoughCounterConfig = {
   noisePercentile: 10,
   noiseMarginDb: 6,
   hysteresisDb: 3,
-  minCoughDurationMs: 100,
-  maxCoughDurationMs: 2000,
+  minCoughDurationMs: 190,
+  maxCoughDurationMs: 900,
   calibrationDurationMs: 900,
   // Mirror the server's AudioConfig spectral-gate defaults exactly.
   useSpectralGate: true,
   minSpectralCentroidHz: 350,
-  minZeroCrossingRate: 0.03,
-  maxZeroCrossingRate: 0.34,
+  maxBurstFrames: 28,
+  maxZeroCrossingRate: 0.7,
+  adaptiveMarginRatio: 0.2,
+  maxAdaptiveMarginDb: 12,
 };
 
 export type CalibrationPhase = "calibrating" | "ready";
@@ -145,20 +172,27 @@ function percentile(values: number[], p: number): number {
   return sorted[idx];
 }
 
+
 /**
  * Live cough counter.
  *
- * Deliberately mirrors the server algorithm in `apps/api/tbcare_api/audio/events.py`
- * (`detect_cough_events`): stage 1 is short-term RMS energy with hysteresis
- * (`noise_margin_db` above the noise floor to trigger, `hysteresis_db` below to
- * release) and a min/max cough duration window; stage 2 is a spectral gate that
- * keeps a candidate only when its mean spectral centroid is high enough and its
- * zero-crossing rate falls inside a window. That gate rejects loud tones, music
- * and speech bursts, which the energy stage alone would count as coughs.
+ * Mirrors the server algorithm in `apps/api/tbcare_api/audio/events.py`
+ * (`detect_cough_events`) so what the user sees while recording is what the
+ * server will count: stage 1 is short-term RMS energy with hysteresis (above
+ * the noise floor plus `noiseMarginDb` to trigger, `hysteresisDb` below to
+ * release) inside a min/max cough duration window; stage 2 is a spectral gate
+ * that keeps a candidate only when its mean spectral centroid and
+ * zero-crossing rate look like a cough rather than a tone, a tap or speech.
  *
- * Unlike the server (which sees the whole clip), the live counter streams, so
- * the noise floor is a rolling percentile and the spectral features are kept
- * per frame alongside the energy history.
+ * Two properties matter for a live count:
+ *
+ * - The noise floor is fixed once calibration ends, like the server's global
+ *   percentile. A rolling floor moved the thresholds while the user was still
+ *   coughing, so a counted cough could be "uncounted" a moment later and the
+ *   counter dropped back to 0.
+ * - History is scored once, incrementally: only frames after the last scored
+ *   frame are examined and a closed candidate is final, so the count only ever
+ *   grows within one take.
  */
 export function useLiveCoughCounter(
   audioData: Float32Array | null,
@@ -176,8 +210,10 @@ export function useLiveCoughCounter(
     calibrationDurationMs = DEFAULT_CONFIG.calibrationDurationMs,
     useSpectralGate = DEFAULT_CONFIG.useSpectralGate,
     minSpectralCentroidHz = DEFAULT_CONFIG.minSpectralCentroidHz,
-    minZeroCrossingRate = DEFAULT_CONFIG.minZeroCrossingRate,
     maxZeroCrossingRate = DEFAULT_CONFIG.maxZeroCrossingRate,
+    maxBurstFrames = DEFAULT_CONFIG.maxBurstFrames,
+    adaptiveMarginRatio = DEFAULT_CONFIG.adaptiveMarginRatio,
+    maxAdaptiveMarginDb = DEFAULT_CONFIG.maxAdaptiveMarginDb,
   } = config;
 
   const mergedConfig = useMemo(
@@ -193,8 +229,10 @@ export function useLiveCoughCounter(
       calibrationDurationMs,
       useSpectralGate,
       minSpectralCentroidHz,
-      minZeroCrossingRate,
       maxZeroCrossingRate,
+      maxBurstFrames,
+      adaptiveMarginRatio,
+      maxAdaptiveMarginDb,
     }),
     [
       sampleRate,
@@ -208,8 +246,10 @@ export function useLiveCoughCounter(
       calibrationDurationMs,
       useSpectralGate,
       minSpectralCentroidHz,
-      minZeroCrossingRate,
       maxZeroCrossingRate,
+      maxBurstFrames,
+      adaptiveMarginRatio,
+      maxAdaptiveMarginDb,
     ]
   );
 
@@ -221,26 +261,33 @@ export function useLiveCoughCounter(
   const [thresholdLo, setThresholdLo] = useState<number | null>(null);
   const [calibrationPhase, setCalibrationPhase] = useState<CalibrationPhase>("calibrating");
   const [calibrationProgress, setCalibrationProgress] = useState(0);
+  /** Peak of the latest batch, for the take's clipping check. */
+  const [peakAmplitude, setPeakAmplitude] = useState(0);
 
-  const inCoughRef = useRef(false);
-  const coughStartFrameRef = useRef(0);
-  const frameIndexRef = useRef(0);
   const calibrationFramesRef = useRef(0);
   const calibrationEnergyRef = useRef<number[]>([]);
-  /** Every frame of energy seen so far (index = global frame). Detection is
-   *  re-run over this whole history each update, so a cough that lands during
-   *  the calibration window is still counted once the floor is known. */
+  /** Every frame of energy seen so far (index = global frame). */
   const allEnergyRef = useRef<number[]>([]);
-  const recentEnergyRef = useRef<number[]>([]);
-  const noiseFloorRef = useRef(-120);
-  const isCalibratedRef = useRef(false);
-  /** Per-frame spectral centroid (Hz) and ZCR, index-aligned with
-   *  `allEnergyRef` so the stage-2 gate can score any candidate span. */
+  /** Per-frame spectral centroid (Hz) and ZCR, index-aligned with the energy. */
   const allCentroidRef = useRef<number[]>([]);
   const allZcrRef = useRef<number[]>([]);
-
   /** Samples already scored, so a resent take is not scored twice. */
   const processedLengthRef = useRef<number>(0);
+  /** True once calibration seeded the floor; reset per take. */
+  const isCalibratedRef = useRef(false);
+  /** Loudest frame since calibration, used to lift the floor adaptively. */
+  const maxEnergyRef = useRef(-Infinity);
+  /** Thresholds fixed at the end of calibration; +-Infinity until then. */
+  const tauHiRef = useRef<number>(Infinity);
+  const tauLoRef = useRef<number>(Infinity);
+  /** Open candidate at the tail of the audio, and the events closed so far. */
+  const inCoughRef = useRef(false);
+  const coughStartFrameRef = useRef(0);
+  const closedEventsRef = useRef<CoughEvent[]>([]);
+  /** Frames already through the state machine, so a batch only scores new ones. */
+  const scoredFramesRef = useRef(0);
+  /** Set after a forced cut; blocks reopening until the level falls under `tauLo`. */
+  const holdingRef = useRef(false);
 
   const processFrames = useCallback(() => {
     if (!audioData || audioData.length === 0) return;
@@ -257,22 +304,37 @@ export function useLiveCoughCounter(
       calibrationDurationMs: calMs,
       useSpectralGate,
       minSpectralCentroidHz,
-      minZeroCrossingRate,
       maxZeroCrossingRate,
+      maxBurstFrames,
     } = mergedConfig;
 
     const minFrames = Math.ceil((minMs / 1000) * (sr / hl));
-    const maxFrames = Math.floor((maxMs / 1000) * (sr / hl));
+    let maxFrames = Math.floor((maxMs / 1000) * (sr / hl));
+    // `maxBurstFrames` is calibrated at the analysis rate the rule was
+    // measured at (16 kHz). The frame length is fixed in samples, so at the
+    // microphone's native 44.1/48 kHz the same cough spans three times as
+    // many frames: comparing against the raw 16 kHz number rejected every
+    // real cough on a phone. Scale the budget with the sample rate.
+    const maxBurstAtRate = Math.round((maxBurstFrames * sr) / DEFAULT_CONFIG.sampleRate);
+    // A long, loud stretch (the user coughed straight into the mic, or the
+    // room got louder than the calibrated floor) can stay above `tauHi` for
+    // seconds, so the release check below never fires. Close it as its own
+    // event once it is too long to be one cough instead of letting the tail
+    // swallow every later cough.
+    if (maxFrames < minFrames) maxFrames = minFrames + 1;
     const calibrationFrames = Math.ceil((calMs / 1000) * (sr / hl));
-    // Keep ~2.5s of history for the rolling noise floor.
-    const floorWindowFrames = Math.ceil(2.5 * (sr / hl));
 
     // The worklet resends the whole take on every stream, so only score what
-    // follows the frames already scored here. Tracked locally rather than
-    // taken from the message offset: React batches renders, and a newer
-    // snapshot can replace an unseen one, which would otherwise skip the
-    // frames in between. If the buffer restarts (a new take) start over.
-    if (audioData.length < processedLengthRef.current) processedLengthRef.current = 0;
+    // follows the frames already scored here. If the buffer restarts (a new
+    // take), start over.
+    if (audioData.length < processedLengthRef.current) {
+      // A new take: do not carry the old take's in-progress state over.
+      processedLengthRef.current = 0;
+      inCoughRef.current = false;
+      holdingRef.current = false;
+      coughStartFrameRef.current = 0;
+      scoredFramesRef.current = 0;
+    }
     if (audioData.length <= processedLengthRef.current + hl) return;
     const newFrames = Math.floor((audioData.length - processedLengthRef.current) / hl);
     if (newFrames <= 0) return;
@@ -280,11 +342,16 @@ export function useLiveCoughCounter(
     const newEnergyDb: number[] = [];
     const newCentroid: number[] = [];
     const newZcr: number[] = [];
+    let peak = 0;
     for (let i = 0; i < newFrames; i++) {
       const start = processedLengthRef.current + i * hl;
       const end = start + fl;
       if (end > audioData.length) break;
       const frame = audioData.subarray(start, end);
+      for (let k = 0; k < frame.length; k++) {
+        const a = Math.abs(frame[k]);
+        if (a > peak) peak = a;
+      }
       newEnergyDb.push(frameEnergyDb(frame));
       if (useSpectralGate) {
         const { centroid, zcr } = frameSpectralFeatures(frame, sr);
@@ -295,7 +362,7 @@ export function useLiveCoughCounter(
     if (newEnergyDb.length === 0) return;
 
     processedLengthRef.current += newEnergyDb.length * hl;
-
+    if (peak > peakAmplitude) setPeakAmplitude(peak);
     allEnergyRef.current.push(...newEnergyDb);
     if (useSpectralGate) {
       allCentroidRef.current.push(...newCentroid);
@@ -303,99 +370,127 @@ export function useLiveCoughCounter(
     }
 
     // --- Calibration: gather a short window and seed the noise floor. ---
-    // Frames arriving here are NOT discarded; they are appended to the history
-    // and replayed through the detector the moment the floor is known.
-    if (!isCalibratedRef.current) {
+    // Frames arriving here are kept: detection below replays them once the
+    // floor is known, so a cough during calibration is still counted.
+    if (calibrationFramesRef.current < calibrationFrames) {
       calibrationEnergyRef.current.push(...newEnergyDb);
       calibrationFramesRef.current += newEnergyDb.length;
       setCalibrationProgress(Math.min(1, calibrationFramesRef.current / calibrationFrames));
-
-      if (calibrationFramesRef.current < calibrationFrames) {
-        setEnergyDb(new Float32Array(newEnergyDb));
-        return;
-      }
+      setEnergyDb(new Float32Array(newEnergyDb));
+      if (calibrationFramesRef.current < calibrationFrames) return;
 
       const floor = percentile(calibrationEnergyRef.current, np);
-      noiseFloorRef.current = floor;
-      recentEnergyRef.current = [...calibrationEnergyRef.current];
+      tauHiRef.current = floor + nm;
+      tauLoRef.current = floor + nm - hys;
       isCalibratedRef.current = true;
       setNoiseFloorDb(floor);
-      setThresholdHi(floor + nm);
-      setThresholdLo(floor + nm - hys);
+      setThresholdHi(tauHiRef.current);
+      setThresholdLo(tauLoRef.current);
       setCalibrationPhase("ready");
-      // fall through to detection over the full history (incl. calibration)
     }
 
-    // --- Rolling noise floor, only refreshed between coughs. The trailing
-    // window always covers the most recent audio so a rising room tone is
-    // tracked, while the floor is recomputed from scratch each pass. ---
+    // Lift the trigger with the loudest frame heard so far (see
+    // `adaptiveMarginRatio`), never above the calibrated value plus the cap.
+    const tauLo = tauLoRef.current;
+    let tauHi = tauHiRef.current;
+    for (const e of newEnergyDb) if (e > maxEnergyRef.current) maxEnergyRef.current = e;
+    const loudest = maxEnergyRef.current;
+    if (Number.isFinite(loudest)) {
+      const margin =
+        hysteresisDb + Math.min(maxAdaptiveMarginDb, adaptiveMarginRatio * (loudest - (tauHi - noiseMarginDb)));
+      tauHi = tauHi - noiseMarginDb + margin;
+    }
     const history = allEnergyRef.current;
-    const windowStart = Math.max(0, history.length - floorWindowFrames);
-    const floor = percentile(history.slice(windowStart), np);
-    noiseFloorRef.current = floor;
-    setNoiseFloorDb(floor);
+    const centroids = allCentroidRef.current;
+    const zcrs = allZcrRef.current;
+    const closed = closedEventsRef.current;
 
-    const tauHi = floor + nm;
-    const tauLo = tauHi - hys;
-    setThresholdHi(tauHi);
-    setThresholdLo(tauLo);
+    /**
+     * True when the frames in [from, to) look like one cough: a burst of the
+     * right length and not pitched low. The length bound carries the weight
+     * (see `maxBurstFrames`); the spectral floor rejects tapping and thuds.
+     */
+    const isCough = (from: number, to: number): boolean => {
+      const frames = to - from;
+      if (frames < minFrames || frames > maxBurstAtRate) return false;
+      if (!useSpectralGate) return true;
+      // Measure the spectral features over the loud frames only, so speech
+      // that trails into a cough (and shares the candidate window) does not
+      // drag the centroid down toward the voice's fundamental.
+      let peak = -Infinity;
+      for (let f = from; f < to && f < history.length; f++) {
+        if (history[f] > peak) peak = history[f];
+      }
+      let centroid = 0;
+      let zcr = 0;
+      let loud = 0;
+      for (let f = from; f < to && f < history.length; f++) {
+        if (history[f] < peak - 6) continue;
+        centroid += centroids[f];
+        zcr += zcrs[f];
+        loud++;
+      }
+      if (loud === 0) return false;
+      centroid /= loud;
+      zcr /= loud;
+      return centroid >= minSpectralCentroidHz && zcr <= maxZeroCrossingRate;
+    };
 
-    // --- Detect over the whole history (idempotent). ---
-    const detected: CoughEvent[] = [];
-    let inCough = false;
-    let coughStart = 0;
-    for (let idx = 0; idx < history.length; idx++) {
+    /**
+     * Scores one above-threshold stretch. When the stretch is short enough to
+     * be a single cough it is tested as a whole. When it is longer (speech
+     * that never falls back under the release threshold, a room that got
+     * loud), a cough inside it would be averaged away, so every window of
+     * one-cough length is tested on its own and a passing window is kept.
+     * Windows are spaced half a window apart so a burst that straddles a
+     * boundary is still seen whole by the neighbouring window.
+     */
+    const closeCandidate = (startFrame: number, endFrame: number): void => {
+      if (!isCough(startFrame, endFrame)) return;
+      closed.push({
+        startMs: (startFrame * hl * 1000) / sr,
+        endMs: (endFrame * hl * 1000) / sr,
+      });
+    };
+
+    // --- Detect, incrementally, over the frames not scored yet. ---
+    // Starting at frame 0 every time replayed the state machine over the whole
+    // take: a stretch still open from the previous batch was closed against an
+    // `idx` from the start of the take and the same cough was pushed again on
+    // every batch. One pass per frame, ever.
+    const fromFrame = scoredFramesRef.current;
+    scoredFramesRef.current = history.length;
+    for (let idx = fromFrame; idx < history.length; idx++) {
       const eDb = history[idx];
-      if (!inCough && eDb > tauHi) {
-        inCough = true;
-        coughStart = idx;
-      } else if (inCough && eDb < tauLo) {
-        const durationFrames = idx - coughStart;
-        if (durationFrames >= minFrames && durationFrames <= maxFrames) {
-          // Stage 2: spectral gate. When enabled, keep the candidate only if
-          // its mean centroid and ZCR fall inside the cough band, mirroring
-          // the server's `detect_cough_events`.
-          let keep = true;
-          if (useSpectralGate) {
-            let centroidSum = 0;
-            let zcrSum = 0;
-            let n = 0;
-            const centroids = allCentroidRef.current;
-            const zcrs = allZcrRef.current;
-            for (let f = coughStart; f < idx && f < centroids.length; f++) {
-              centroidSum += centroids[f];
-              zcrSum += zcrs[f];
-              n++;
-            }
-            if (n > 0) {
-              const meanCentroid = centroidSum / n;
-              const meanZcr = zcrSum / n;
-              keep =
-                meanCentroid >= minSpectralCentroidHz &&
-                meanZcr >= minZeroCrossingRate &&
-                meanZcr <= maxZeroCrossingRate;
-            }
-          }
-          if (keep) {
-            detected.push({
-              startMs: (coughStart * hl * 1000) / sr,
-              endMs: (idx * hl * 1000) / sr,
-            });
-          }
-        }
-        inCough = false;
+      if (inCoughRef.current && (eDb < tauLo || idx - coughStartFrameRef.current > maxFrames)) {
+        // A stretch cut at `maxFrames` was still loud when cut, so it is a
+        // sustained sound, not a cough: drop it rather than scoring a fraction
+        // of it. Stay held until the level really falls, or the rest of that
+        // sound is picked up as a fresh burst.
+        const forced = eDb >= tauLo;
+        if (!forced) closeCandidate(coughStartFrameRef.current, idx);
+        inCoughRef.current = false;
+        holdingRef.current = forced;
+      } else if (!inCoughRef.current && holdingRef.current && eDb < tauLo) {
+        holdingRef.current = false;
+      } else if (!inCoughRef.current && !holdingRef.current && eDb > tauHi) {
+        inCoughRef.current = true;
+        coughStartFrameRef.current = idx;
       }
     }
-    // A cough still open at the end of the buffer stays pending: it is left
-    // open (inCough) and will close when the audio falls below tauLo.
-    inCoughRef.current = inCough;
-    coughStartFrameRef.current = coughStart;
-    frameIndexRef.current = history.length;
 
-    setEvents(detected);
-    setCoughCount(detected.length);
+    setEvents([...closed]);
+    setCoughCount(closed.length);
     setEnergyDb(new Float32Array(newEnergyDb));
-  }, [audioData, mergedConfig]);
+  }, [
+    audioData,
+    mergedConfig,
+    peakAmplitude,
+    adaptiveMarginRatio,
+    hysteresisDb,
+    maxAdaptiveMarginDb,
+    noiseMarginDb,
+  ]);
 
   useEffect(() => {
     processFrames();
@@ -404,15 +499,19 @@ export function useLiveCoughCounter(
   const reset = useCallback(() => {
     processedLengthRef.current = 0;
     inCoughRef.current = false;
+    holdingRef.current = false;
     coughStartFrameRef.current = 0;
-    frameIndexRef.current = 0;
+    scoredFramesRef.current = 0;
     calibrationFramesRef.current = 0;
     calibrationEnergyRef.current = [];
     allEnergyRef.current = [];
     allCentroidRef.current = [];
     allZcrRef.current = [];
-    noiseFloorRef.current = -120;
+    closedEventsRef.current = [];
+    tauHiRef.current = Infinity;
+    tauLoRef.current = Infinity;
     isCalibratedRef.current = false;
+    maxEnergyRef.current = -Infinity;
     setCoughCount(0);
     setEvents([]);
     setEnergyDb(null);
@@ -421,6 +520,7 @@ export function useLiveCoughCounter(
     setThresholdLo(null);
     setCalibrationPhase("calibrating");
     setCalibrationProgress(0);
+    setPeakAmplitude(0);
   }, []);
 
   return {
@@ -432,6 +532,8 @@ export function useLiveCoughCounter(
     thresholdLo,
     calibrationPhase,
     calibrationProgress,
+    /** Loudest sample in the take so far, in [0, 1]. */
+    peakAmplitude,
     reset,
   };
 }

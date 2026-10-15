@@ -113,6 +113,12 @@ export const copy = {
     body: "Untuk anak atau remaja yang batuk lebih dari 2 minggu, ajak ke puskesmas untuk diperiksa.",
     findClinicButton: "Cari puskesmas terdekat",
     backToStartButton: "Kembali ke awal",
+    /** Shown when the user has coughed for less than two weeks. */
+    shortCough: {
+      title: "Batuk baru beberapa hari.",
+      body:
+        "Pemeriksaan ini untuk batuk yang sudah 2 minggu atau lebih. Kalau batukmu belum sembuh dalam 2 minggu, batuk berdarah, atau bertambah berat, periksakan ke puskesmas terdekat.",
+    },
   },
   record: {
     title: "Tahap Rekam Batuk",
@@ -125,6 +131,8 @@ export const copy = {
     calibratingSubtitle: "Diamkan sebentar, lalu coba batuk 1-2 kali untuk latihan.",
     calibratingProgress: "Mempelajari suara lingkungan...",
     calibratingCoughHint: "Coba batuk sekarang",
+    calibratingSlow: "Kalau persentase tidak bergerak, cek izin mikrofon lalu rekam ulang.",
+    retryButton: "Coba nyalakan mikrofon lagi",
     errorMicPermission: "Izin mikrofon ditolak. Buka pengaturan browser.",
     errorMicNotFound: "Mikrofon tidak ditemukan.",
     errorAudioContext: "Gagal memulai audio. Coba refresh halaman.",
@@ -180,6 +188,16 @@ export const copy = {
     ],
     errorTitle: "Gagal Menganalisis",
     backToRecordButton: "Kembali ke Rekam",
+    retryButton: "Coba lagi",
+    /** Per-failure explanation. Only a broken take needs a re-record. */
+    failureMessages: {
+      network: "Koneksi ke server terputus. Pastikan internetmu jalan, lalu coba lagi.",
+      E4: "File rekaman tidak bisa dibaca server. Coba rekam ulang.",
+      E5: "Durasi rekaman terlalu pendek atau terlalu panjang. Coba rekam ulang.",
+      E10: "Server sedang sibuk atau butuh waktu lebih lama. Coba lagi sebentar.",
+      E11: "Ada jawaban yang tidak lengkap. Coba ulangi dari awal.",
+      generic: "Server sedang gangguan. Coba lagi sebentar.",
+    },
   },
   result: {
     title: "Hasil Tes Batuk",
@@ -331,9 +349,9 @@ export const copy = {
     E3: "Mikrofon tidak didukung di browser ini.",
     E4: "Format audio tidak didukung. Gunakan WAV PCM 16-bit mono.",
     E5: "Durasi audio tidak valid. Maksimal 30 detik.",
-    E6: "Kualitas tidak memenuhi syarat: batuk valid kurang dari 3.",
-    E7: "Kualitas tidak memenuhi syarat: derau terlalu besar.",
-    E8: "Kualitas tidak memenuhi syarat: audio terpotong (clipping).",
+    E6: "Kami cuma mendengar 3 batuk atau kurang. Batuk lebih keras, dekatkan sedikit ke mikrofon, lalu rekam ulang.",
+    E7: "Suara di sekitar terlalu berisik. Cari tempat lebih tenang, lalu rekam ulang.",
+    E8: "Suara batuk terlalu keras sampai terpotong. Jauhkan mikrofon sedikit, lalu rekam ulang.",
     E9: "Model tidak tersedia saat ini.",
     E10: "Gagal menganalisis. Coba rekam ulang.",
     E11: "Data permintaan tidak valid.",

@@ -20,20 +20,14 @@ export interface S6QualityCheckProps {
 }
 
 /**
- * "Passed" means the recording reached the confirmation screen straight from
- * the recorder, where the only signal available is the live on-device count.
- * A take that came back from the API always carries an errorCode, so it is
- * never shown as a success again: that used to trap users on the confirmation
- * screen with no explanation.
+ * The API is the authority on whether a take is usable. The on-device counter
+ * is a live aid, not a gate: it runs before the final sample is in and its
+ * thresholds cannot be identical to the server's, so demanding a fixed count
+ * here blocked users at this screen with no way to reach their result. Only a
+ * take that came back from the API with a rejection is shown as a failure.
  */
-function isRecordingAcceptable(state: {
-  acceptedCoughs: number;
-  noiseLevel: "quiet" | "moderate" | "loud";
-  clipping: boolean;
-  errorCode?: string;
-}): boolean {
-  if (state.errorCode) return false;
-  return state.acceptedCoughs >= MIN_ACCEPTED_COUGHS && state.noiseLevel !== "loud" && !state.clipping;
+function isRecordingAcceptable(errorCode: string | undefined): boolean {
+  return !errorCode;
 }
 
 /**
@@ -82,7 +76,7 @@ export function S6QualityCheck({
   onRerecord,
   onBack,
 }: S6QualityCheckProps) {
-  const passed = isRecordingAcceptable({ acceptedCoughs, noiseLevel, clipping, errorCode });
+  const passed = isRecordingAcceptable(errorCode);
 
   if (passed) {
     return (
@@ -165,12 +159,14 @@ export function S6QualityCheck({
           <Banner variant="warning" title={copy.qualityCheck.failTitle}>
             {transportErrorText ? (
               <p>{transportErrorText}</p>
-            ) : (
+            ) : failures.length > 1 ? (
               <ul className="list-disc space-y-1 pl-5 text-left">
                 {failures.map((failure) => (
                   <li key={failure}>{failure}</li>
                 ))}
               </ul>
+            ) : (
+              <p className="text-left">{failures[0]}</p>
             )}
           </Banner>
         </div>

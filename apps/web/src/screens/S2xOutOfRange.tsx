@@ -1,31 +1,46 @@
 import { copy } from "@/copy";
 import { MobileShell } from "@/components";
+export type OutOfRangeReason = "age" | "short_cough";
 
 export interface S2xOutOfRangeProps {
+  /** Why the user left the flow; picks the matching explanation. */
+  reason: OutOfRangeReason;
   onFindClinic: () => void;
   onBackToStart: () => void;
 }
 
-/** Shown when the user falls outside the screening age range. */
-export function S2xOutOfRange({ onFindClinic, onBackToStart }: S2xOutOfRangeProps) {
+/**
+ * Shown when the user falls outside the screening age range or reports a
+ * cough that has not lasted long enough to screen.
+ *
+ * The message is anchored near the top (not vertically centred) and the action
+ * buttons are pinned to the bottom, so the layout matches every other screen
+ * in the flow and the primary action sits under the user's thumb instead of
+ * floating in the middle of the page.
+ */
+export function S2xOutOfRange({ reason, onFindClinic, onBackToStart }: S2xOutOfRangeProps) {
+  // The screen serves two exits: too young, and coughing for under two weeks.
+  // Each needs its own explanation, otherwise a 19-year-old who chose "kurang
+  // dari 2 minggu" is told to bring a child to the clinic.
+  const message = reason === "short_cough" ? copy.outOfRange.shortCough : copy.outOfRange;
   return (
     <MobileShell>
-      {/* Centred content: pad by the real safe-area insets so nothing sits
-          under the notch or home indicator on a device. */}
-      <div
-        className="flex flex-col flex-1 justify-center text-center"
-        style={{
-          paddingTop: "env(safe-area-inset-top, 0px)",
-          paddingBottom: "env(safe-area-inset-bottom, 0px)",
-        }}
-      >
-        <h1 className="text-2xl font-medium text-text-primary/80">
-          {copy.outOfRange.title}
-        </h1>
-        <p className="mt-3 text-base font-normal text-text-primary/60">
-          {copy.outOfRange.body}
-        </p>
-        <div className="mt-10 space-y-3">
+      <div className="flex flex-col flex-1">
+        <div
+          className="text-center"
+          style={{ paddingTop: "calc(env(safe-area-inset-top, 62px) + 48px)" }}
+        >
+          <h1 className="text-2xl font-medium leading-[31px] text-text-primary/80">
+            {message.title}
+          </h1>
+          <p className="mx-auto mt-3 max-w-[300px] text-base font-normal leading-[21px] text-text-primary/60">
+            {message.body}
+          </p>
+        </div>
+        <div
+          className="mt-auto space-y-3 pt-8"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 34px) + 13px)" }}
+        >
           <button
             type="button"
             onClick={onFindClinic}

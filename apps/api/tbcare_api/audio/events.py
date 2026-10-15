@@ -128,7 +128,7 @@ def detect_cough_events(
     min_frames = int(config.min_cough_duration_s * sample_rate / hop_length)
     max_frames = int(config.max_cough_duration_s * sample_rate / hop_length)
 
-    candidates = []
+    stretches = []
     in_cough = False
     start_frame = 0
 
@@ -137,23 +137,28 @@ def detect_cough_events(
             in_cough = True
             start_frame = i
         elif in_cough and e_db < tau_lo:
-            duration_frames = i - start_frame
-            if min_frames <= duration_frames <= max_frames:
-                start_time = start_frame * hop_length / sample_rate
-                end_time = i * hop_length / sample_rate
-                candidates.append((start_frame, i, start_time, end_time))
+            stretches.append((start_frame, i))
             in_cough = False
 
     if in_cough:
-        duration_frames = len(energy_db) - start_frame
-        if min_frames <= duration_frames <= max_frames:
-            start_time = start_frame * hop_length / sample_rate
-            end_time = len(audio) / sample_rate
-            candidates.append((start_frame, len(energy_db), start_time, end_time))
+        stretches.append((start_frame, len(energy_db)))
 
-    if not getattr(config, "use_spectral_gate", True) or not candidates:
+    # A stretch longer than one cough is a sustained sound (speech that never
+    # falls back under the release threshold, a room that got loud), not a
+    # cough. Scoring windows inside it split a held note into bursts short
+    # enough to pass, so it is dropped whole. Mirrors the live counter.
+    candidates = [
+        (start, end)
+        for start, end in stretches
+        if min_frames <= end - start <= config.max_burst_frames
+    ]
+
+    if not getattr(config, "use_spectral_gate", True):
         return (
-            [(s, e) for _, _, s, e in candidates],
+            [
+                (s * hop_length / sample_rate, e * hop_length / sample_rate)
+                for s, e in candidates
+            ],
             energy_db,
             noise_floor_db,
         )
@@ -162,16 +167,25 @@ def detect_cough_events(
         audio, frame_length, hop_length, sample_rate
     )
     events = []
-    for cand_start, cand_end, start_time, end_time in candidates:
-        mean_centroid = _segment_mean(centroid, cand_start, cand_end)
-        mean_zcr = _segment_mean(zcr, cand_start, cand_end)
+    for cand_start, cand_end in candidates:
+        # Measure the spectrum over the loud frames only: speech trailing into
+        # a cough shares the window and would otherwise drag the centroid down
+        # toward the voice's fundamental.
+        span = energy_db[cand_start:cand_end]
+        peak_db = float(np.max(span))
+        loud = span >= peak_db - 6.0
+        mean_centroid = float(np.mean(centroid[cand_start:cand_end][loud]))
+        mean_zcr = float(np.mean(zcr[cand_start:cand_end][loud]))
         if (
             mean_centroid >= config.min_spectral_centroid_hz
-            and config.min_zero_crossing_rate
-            <= mean_zcr
-            <= config.max_zero_crossing_rate
+            and mean_zcr <= config.max_zero_crossing_rate
         ):
-            events.append((start_time, end_time))
+            events.append(
+                (
+                    cand_start * hop_length / sample_rate,
+                    cand_end * hop_length / sample_rate,
+                )
+            )
 
     return events, energy_db, noise_floor_db
 

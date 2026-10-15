@@ -84,13 +84,16 @@ function App() {
     navigate("S5_RECORD");
   }, [navigate]);
 
-  const handleRecordingComplete = useCallback((audioBlob: Blob, coughData: { count: number; events: Array<{startMs: number, endMs: number}> }) => {
-    dispatch({ type: "SET_RECORDING_DATA", data: { 
-      audioBlob, 
+  const handleRecordingComplete = useCallback((audioBlob: Blob, coughData: { count: number; events: Array<{startMs: number, endMs: number}>; peakAmplitude: number }) => {
+    // A sample at full scale means the input clipped: the waveform is cut flat
+    // and the cough's shape is lost, which is what the server needs to score
+    // it. Report it instead of always claiming the take was clean.
+    dispatch({ type: "SET_RECORDING_DATA", data: {
+      audioBlob,
       acceptedCoughs: coughData.count,
       rejectedCoughs: 0,
       noiseLevel: "quiet",
-      clipping: false,
+      clipping: coughData.peakAmplitude >= 0.99,
     } });
     navigate("S6_QUALITY_CHECK");
   }, [navigate]);
@@ -145,12 +148,13 @@ function App() {
     [navigate],
   );
 
+  // A failed request is not a failed take. S7Analyze keeps the user on its own
+  // screen with a retry button, so the recording is not thrown away and the
+  // confirmation screen no longer shows a transport error as if the audio were
+  // bad (that is what made "Lihat hasil" look like it did nothing).
   const handleAnalysisError = useCallback((errorCode: string) => {
     dispatch({ type: "SET_ERROR", error: errorCode });
-    // Also store in recordingData for S6QualityCheck to display
-    dispatch({ type: "SET_RECORDING_DATA", data: { qualityError: errorCode } });
-    navigate("S6_QUALITY_CHECK");
-  }, [navigate]);
+  }, []);
 
   const handleQualityCheckPass = useCallback(() => {
     navigate("S7_ANALYZE");
@@ -206,12 +210,16 @@ function App() {
             onSymptomChange={handleSymptomChange}
             onComplete={handleQuestionsComplete}
             onBack={() => navigate("S1_CONSENT")}
-            onOutOfRange={() => navigate("S2x_OUT_OF_RANGE")}
+            onOutOfRange={(reason) => {
+              dispatch({ type: "SET_OUT_OF_RANGE_REASON", reason });
+              navigate("S2x_OUT_OF_RANGE");
+            }}
           />
         );
       case "S2x_OUT_OF_RANGE":
         return (
           <S2xOutOfRange
+            reason={context.outOfRangeReason}
             onFindClinic={() => window.open("https://www.google.com/maps/search/puskesmas+terdekat", "_blank")}
             onBackToStart={() => navigate("S0_HOME")}
           />
@@ -229,7 +237,10 @@ function App() {
             onSymptomChange={handleSymptomChange}
             onComplete={handleQuestionsComplete}
             onBack={() => navigate("S1_CONSENT")}
-            onOutOfRange={() => navigate("S2x_OUT_OF_RANGE")}
+            onOutOfRange={(reason) => {
+              dispatch({ type: "SET_OUT_OF_RANGE_REASON", reason });
+              navigate("S2x_OUT_OF_RANGE");
+            }}
           />
         );
       case "S4_PREP_RECORD":

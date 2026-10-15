@@ -19,15 +19,14 @@ Aplikasi web skrining batuk untuk pemeriksaan dahak TBC. Pengguna menjawab gejal
 
 ## Stack
 
-- **Frontend**: React + TypeScript + Vite + Tailwind, di-deploy static ke Vercel
-- **Backend**: Flask + gunicorn + ONNX Runtime + NumPy/SciPy, jalan di Cloud Run atau lokal
+- **Frontend**: React + TypeScript + Vite + Tailwind
+- **Backend**: Flask + gunicorn + ONNX Runtime + NumPy/SciPy
 - **ML**: PyTorch (offline, hanya di `ml/`)
 
 ## Quick Start (Lokal)
 
 ```bash
 # Prasyarat: Docker + Docker Compose
-cd TUBRA
 ./scripts/run_local.sh up
 
 # Web:  http://localhost:5173
@@ -51,6 +50,8 @@ npm install
 npm run dev
 ```
 
+Web memanggil API lewat path relatif `/api`, diteruskan proxy Vite ke `http://localhost:8080`. Untuk mengarahkan dev ke API yang sudah jalan di host lain, set `VITE_PROXY_TARGET`.
+
 ## Verifikasi
 
 ```bash
@@ -69,53 +70,11 @@ python3 ml/scripts/verify_artifacts.py
 `apps/api/tbcare_api/tests`. Runtime API tidak boleh mengimpor `torch`, `librosa`,
 atau `numba`; dependensi itu hanya dipakai untuk pelatihan di `ml/`.
 
-## Deploy
-
-### Web (Vercel)
-
-Repo ini monorepo, jadi arahkan Vercel ke subfolder web:
-
-- **Root Directory**: `apps/web`
-- **Framework Preset**: Vite
-- **Build Command**: `npm run build`
-- **Output Directory**: `dist`
-
-Secara default web memanggil API lewat path relatif `/api` (cocok dengan proxy
-Vite saat pengembangan). Bila web di-deploy sendiri sementara API ada di host
-lain, set environment variable di Vercel:
-
-```
-VITE_API_BASE=https://<host-api-anda>
-```
-
-### API (Cloud Run)
-
-```bash
-# Butuh: gcloud auth, billing aktif, Artifact Registry repo
-./scripts/deploy_cloudrun.sh <PROJECT_ID> [REGION] [SERVICE_NAME]
-```
-
-## Struktur Repo
-
-```
-TUBRA/
-├── apps/
-│   ├── web/          # React + Vite + Tailwind (public/model_card.json untuk UI)
-│   └── api/          # Flask + ONNX Runtime
-├── ml/               # PyTorch training (offline)
-│   ├── artifacts/    # backbone.onnx(.data), head.npz, model_card.json
-│   ├── configs/      # audio.yaml, train.yaml
-│   ├── scripts/      # prepare_data, data_loader, train, export_artifacts, verify_artifacts
-│   ├── src/          # features (audio, clinical, tta), models (residual fusion)
-│   └── tests/        # paritas log-mel, resampler, TTA, kontrak artefak
-└── scripts/          # run_local.sh, deploy_cloudrun.sh, measure_latency.sh, serve_tailscale.sh
-```
-
-## Artefak Model
+## Artefak dan Hasil Model
 
 `ml/artifacts/` dihasilkan oleh `ml/scripts/export_artifacts.py`. Yang di-commit:
-`model_manifest.json`, `cv_results.json`, `subgroup_metrics.json`, `head.npz`,
-dan `backbone.onnx.data`. Bobot penuh (`backbone.onnx`), model klinis
+`model_manifest.json`, `cv_results.json`, `subgroup_metrics.json`, `model_card.json`,
+`head.npz`, dan `backbone.onnx.data`. Bobot penuh (`backbone.onnx`), model klinis
 (`*.joblib`), dan prediksi (`oof_predictions.npz`) tidak di-commit.
 
 | Berkas | Isi |
@@ -183,6 +142,17 @@ metrik pada `model_card.json` berasal dari validasi silang out-of-fold, bukan uj
 sintetis yang sama. Keduanya memakai window energi, normalisasi `[0, 1]`, dan
 resampler yang sama, sehingga `max|diff|` selalu di bawah toleransi `1e-4`.
 Test ini wajib lulus sebelum artefak apa pun diekspor.
+
+## Reproduksi
+
+```bash
+python3 -m pytest -q                      # test API dan ML
+python3 ml/scripts/verify_artifacts.py    # kontrak artefak
+cd apps/web && npm run build              # build frontend
+```
+
+Metrik tidak dihitung ulang saat build. UI membaca angka dari
+`apps/web/public/model_card.json`, jadi pastikan file itu hasil ekspor terakhir.
 
 ## Lisensi
 

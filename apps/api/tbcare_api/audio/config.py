@@ -37,8 +37,13 @@ class AudioConfig:
     # music, speech and low-frequency thuds.
     use_spectral_gate: bool = True
     min_spectral_centroid_hz: float = 350.0
-    min_zero_crossing_rate: float = 0.03
-    max_zero_crossing_rate: float = 0.34
+    max_zero_crossing_rate: float = 0.7
+    # Longest burst accepted as one cough. On the 160 CODA-TB coughs every
+    # burst ran 12-17 frames, while speech, a held note and a snore run 39-49
+    # and a hand clap 2. Burst length is what separates them: a third of real
+    # coughs have a zero-crossing rate as high as a clap, so the shape checks
+    # alone (centroid floor, loose ZCR cap) only catch lows and transients.
+    max_burst_frames: int = 28
 
 
 AUDIO_CONFIG = AudioConfig()
