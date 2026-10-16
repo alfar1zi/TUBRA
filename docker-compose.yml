@@ -10,14 +10,26 @@ services:
     environment:
       - PORT=8080
       - DEMO_ENABLED=true
+      # Local dev runs against the CANDIDATE manifest; opt in explicitly so the
+      # new 503 gate does not block a developer exercising the full path.
+      - DEPLOYMENT_ENV=staging
+      - ALLOW_BLOCKED_CANDIDATE=true
+      - TBCARE_ARTIFACTS=/app/ml/artifacts
+    # The image already COPYs ml/artifacts (see apps/api/Dockerfile), so the
+    # bind-mount is only a dev convenience: after retraining on the host, the
+    # container picks up new artifacts without a rebuild. Comment it out for a
+    # deploy that must run purely from the image contents.
     volumes:
       - ./ml/artifacts:/app/ml/artifacts:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      # python is guaranteed present in the image; curl is not installed, so a
+      # curl-based check would always fail and block `web` (depends_on
+      # service_healthy) from ever starting.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/api/v1/health', timeout=4).status == 200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
 
   web:
     build:
