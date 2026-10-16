@@ -1,7 +1,17 @@
-sample_rate: 16000
-n_fft: 400
-hop_length: 160
-n_mels: 64
-f_min: 50
-f_max: 8000
-duration: 5.0
+# Audio feature recipe for the exported artifacts.
+#
+# NOTE: this file is NOT read by train.py/export_artifacts.py. The effective
+# recipe is train.yaml -> AudioFeatureConfig, whose defaults (n_fft=1024,
+# hop_length=256, f_min=0.0, f_max=None) fill any field not overridden in
+# train.yaml. This block is kept in sync manually so it documents the truth;
+# if it ever disagrees with model_manifest.json -> audio_config, the manifest
+# wins (see apps/api/tbcare_api/audio/logmel.py).
+audio:
+  recipe: energy_v2
+  sample_rate: 16000
+  n_fft: 1024
+  hop_length: 256
+  n_mels: 64
+  f_min: 0.0
+  f_max: null
+  target_frames: 64
