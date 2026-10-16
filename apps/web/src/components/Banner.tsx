@@ -7,9 +7,9 @@ export interface BannerProps {
 
 export function Banner({ variant, title, children, action }: BannerProps) {
   const styles = {
-    info: "bg-blue-50 border-blue-200 text-blue-800",
-    warning: "bg-yellow-50 border-yellow-200 text-yellow-800",
-    urgent: "bg-red-50 border-red-200 text-red-800 border-2",
+    info: "bg-brand-soft/50 border-brand/20 text-brand",
+    warning: "bg-warning-soft border-warning/30 text-warning",
+    urgent: "bg-danger-soft border-danger/30 text-danger border-2",
   };
 
   const icons = {

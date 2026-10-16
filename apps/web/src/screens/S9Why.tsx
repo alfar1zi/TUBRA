@@ -1,7 +1,7 @@
-import { Button } from "@/components";
+import { MobileShell } from "@/components";
 import { copy } from "@/copy";
 
-interface S9WhyProps {
+export interface S9WhyProps {
   result: {
     tier: "A" | "B" | "C";
     explanation: {
@@ -14,92 +14,97 @@ interface S9WhyProps {
   onHowItWorks: () => void;
 }
 
-export function S9Why({ result, onBack, onHowItWorks }: S9WhyProps) {
-  const symptomLabels: Record<string, string> = {
-    fever: "Demam",
-    night_sweats: "Keringat malam",
-    weight_loss: "Berat badan turun",
-    hemoptysis: "Batuk darah",
-    chest_pain: "Nyeri dada",
-    fatigue: "Lelah berlebihan",
-    smoking: "Merokok",
-  };
+const SYMPTOM_LABELS: Record<string, string> = copy.why.symptomLabels;
 
+export function S9Why({ result, onBack, onHowItWorks }: S9WhyProps) {
   const contributions = Object.entries(result.explanation.symptom_contributions)
-    .map(([key, value]) => ({ label: symptomLabels[key] || key, value }))
+    .map(([key, value]) => ({ label: SYMPTOM_LABELS[key] || key, value }))
     .filter((item) => item.value > 0)
     .sort((a, b) => b.value - a.value)
     .slice(0, 3);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h1 className="text-2xl font-semibold text-gray-900 mb-2">{copy.why.title}</h1>
-          <p className="text-gray-600 mb-8">{copy.why.subtitle}</p>
+    <MobileShell>
+      <div
+        className="flex flex-col flex-1"
+        style={{
+          paddingTop: "calc(env(safe-area-inset-top, 62px) + 24px)",
+          paddingBottom: "calc(env(safe-area-inset-bottom, 34px) + 13px)",
+        }}
+      >
+        <h1 className="text-2xl font-medium text-text-primary/80">{copy.why.title}</h1>
+        <p className="mt-2 text-base font-normal text-text-primary/60">{copy.why.subtitle}</p>
 
-          <div className="space-y-6">
-            <section>
-              <h2 className="text-lg font-medium text-gray-900 mb-3">{copy.why.audioContributionTitle}</h2>
-              <div className="aspect-video bg-gray-100 rounded-lg flex items-center justify-center">
-                <div className="text-center p-4">
-                  <p className="text-gray-500 mb-2">Spektrogram batuk</p>
-                  {result.explanation.gradcam_available && (
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
-                      <span className="text-sm text-gray-700">Tampilkan sorotan</span>
-                    </label>
-                  )}
-                  {result.explanation.gradcam_available && (
-                    <p className="text-xs text-gray-500 mt-2 text-center max-w-xs">
-                      {copy.why.gradcamNote}
-                    </p>
-                  )}
-                </div>
+        <div className="mt-8 space-y-6">
+          <section>
+            <h2 className="mb-3 text-lg font-medium text-text-primary">
+              {copy.why.audioContributionTitle}
+            </h2>
+            <div className="grid aspect-video place-items-center rounded-lg bg-surface-subtle">
+              <div className="p-4 text-center">
+                <p className="mb-2 text-text-primary/60">Spektrogram batuk</p>
+                {result.explanation.gradcam_available && (
+                  <p className="mx-auto mt-2 max-w-xs text-xs text-text-primary/60">{copy.why.gradcamNote}</p>
+                )}
               </div>
-            </section>
+            </div>
+          </section>
 
-            <section>
-              <h2 className="text-lg font-medium text-gray-900 mb-3">{copy.why.symptomContributionTitle}</h2>
-              {contributions.length > 0 ? (
-                <div className="space-y-2">
-                  {contributions.map((item) => (
-                    <div key={item.label} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <span className="text-gray-700">{item.label}: menaikkan prioritas</span>
-                      <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-blue-600 rounded-full"
-                          style={{ width: `${Math.min(item.value * 100, 100)}%` }}
-                        />
-                      </div>
+          <section>
+            <h2 className="mb-3 text-lg font-medium text-text-primary">
+              {copy.why.symptomContributionTitle}
+            </h2>
+            {contributions.length > 0 ? (
+              <div className="space-y-2">
+                {contributions.map((item) => (
+                  <div
+                    key={item.label}
+                    className="flex items-center justify-between rounded-lg bg-surface-subtle p-3"
+                  >
+                    <span className="text-text-primary/80">{item.label}: menaikkan prioritas</span>
+                    <div className="h-2 w-24 overflow-hidden rounded-pill bg-black/10">
+                      <div
+                        className="h-full rounded-pill bg-brand"
+                        style={{ width: `${Math.min(item.value * 100, 100)}%` }}
+                      />
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-gray-600">{copy.why.symptomContributionTitle}</p>
-              )}
-            </section>
-
-            <section>
-              <h2 className="text-lg font-medium text-gray-900 mb-3">{copy.why.limitationsTitle}</h2>
-              <ul className="space-y-2 text-sm text-gray-700 list-disc list-inside">
-                {copy.why.limitations.map((item, i) => (
-                  <li key={i}>{item}</li>
+                  </div>
                 ))}
-              </ul>
-            </section>
-          </div>
+              </div>
+            ) : (
+              <p className="text-text-primary/60">Belum ada gejala yang menonjol pada hasil ini.</p>
+            )}
+          </section>
 
-          <div className="mt-8 space-y-3">
-            <Button size="lg" fullWidth onClick={onBack}>
-              {copy.why.backButton}
-            </Button>
-            <Button variant="ghost" size="md" fullWidth onClick={onHowItWorks}>
-              {copy.why.howItWorksLink}
-            </Button>
-          </div>
+          <section>
+            <h2 className="mb-3 text-lg font-medium text-text-primary">{copy.why.limitationsTitle}</h2>
+            <ul className="list-inside list-disc space-y-2 text-sm text-text-primary/70">
+              {copy.why.limitations.map((item, i) => (
+                <li key={i}>{item}</li>
+              ))}
+            </ul>
+          </section>
+        </div>
+
+        <div className="flex-1" />
+
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="w-full h-[58px] rounded-lg bg-gradient-to-b from-brand to-brand-deep text-lg font-medium text-text-inverse transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+          >
+            {copy.why.backButton}
+          </button>
+          <button
+            type="button"
+            onClick={onHowItWorks}
+            className="w-full h-[57px] rounded-lg bg-brand-soft text-lg font-medium text-brand transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+          >
+            {copy.why.howItWorksLink}
+          </button>
         </div>
       </div>
-    </div>
+    </MobileShell>
   );
 }

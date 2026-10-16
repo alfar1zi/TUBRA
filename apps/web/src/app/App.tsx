@@ -1,19 +1,18 @@
 import { useReducer, useEffect, useCallback, useState } from "react";
-import { getHealth } from "@/api/client";
-import { ScreenResponse } from "@/api/client";
+import { getHealth, ScreenResponse } from "@/api/client";
 import {
   screenReducer,
   initialContext,
   ScreenId,
+  SymptomData,
+  GateData,
 } from "@/state/screenState";
 import {
+  S0Splash,
   S0Home,
   S1Consent,
-  S2Gate,
+  S3Questions,
   S2xOutOfRange,
-  S2yNotTime,
-  S3Symptoms,
-  S4PrepRecord,
   S5Record,
   S6QualityCheck,
   S7Analyze,
@@ -26,6 +25,20 @@ import {
 import { Banner } from "@/components";
 import { copy } from "@/copy";
 
+/**
+ * Copies `text` and confirms to the user, tolerating environments where the
+ * Clipboard API is unavailable or blocked (insecure context, denied
+ * permission). Never throws into a React event handler.
+ */
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    alert(copy.nextSteps.copiedToClipboard);
+  } catch {
+    alert(text);
+  }
+}
+
 function App() {
   const [context, dispatch] = useReducer(screenReducer, initialContext);
   const [demoMode, setDemoMode] = useState(false);
@@ -35,32 +48,42 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("demo") === "1") {
       setDemoMode(true);
-      dispatch({ type: "SET_DEMO_MODE", enabled: true });
     }
   }, []);
 
   // Warm up health check on mount
   useEffect(() => {
-    getHealth().catch(() => {}); // Don't block on health check failure
+    void getHealth().catch(() => {}); // Don't block on health check failure
   }, []);
 
   const navigate = useCallback((screen: ScreenId) => {
     dispatch({ type: "GO_TO", screen });
   }, []);
 
-  const handleGateSubmit = useCallback((age: number, coughDuration: string) => {
-    const weeksMap: Record<string, number> = { "2_4": 3, "4_8": 6, "8_plus": 10 };
-    dispatch({ type: "SET_GATE_DATA", data: { age, coughDurationWeeks: weeksMap[coughDuration] } });
-    navigate("S3_SYMPTOMS");
+  const handleGateChange = useCallback((data: Partial<GateData>) => {
+    dispatch({ type: "SET_GATE_DATA", data });
+  }, []);
+
+  const handleSymptomChange = useCallback((data: Partial<SymptomData>) => {
+    dispatch({ type: "SET_SYMPTOM_DATA", data });
+  }, []);
+
+  const handleQuestionStepChange = useCallback((step: number) => {
+    dispatch({ type: "SET_QUESTION_STEP", step });
+  }, []);
+
+  const handleStartQuestions = useCallback(() => {
+    dispatch({ type: "SET_QUESTION_STEP", step: 0 });
+    navigate("S2_GATE");
   }, [navigate]);
 
-  const handleSymptomsSubmit = useCallback(
-    (data: Record<string, "yes" | "no" | null>) => {
-      dispatch({ type: "SET_SYMPTOM_DATA", data });
-      navigate("S4_PREP_RECORD");
-    },
-    [navigate]
-  );
+  // The design has no separate "prep to record" screen: once the last question
+  // is answered the recording stage begins directly (the mic permission prompt
+  // is raised by the record screen's auto-start).
+  const handleQuestionsComplete = useCallback(() => {
+    navigate("S5_RECORD");
+  }, [navigate]);
+
   const handleRecordingComplete = useCallback((audioBlob: Blob, coughData: { count: number; events: Array<{startMs: number, endMs: number}> }) => {
     dispatch({ type: "SET_RECORDING_DATA", data: { 
       audioBlob, 
@@ -77,10 +100,11 @@ function App() {
       tier: result.tier,
       probability: result.metadata.probability,
       explanation: {
-        symptom_contributions: result.metadata.symptom_explanations ? 
-          Object.fromEntries(result.metadata.symptom_explanations.map((s: string) => [s, 0])) : {},
-        gradcam_available: result.metadata.gradcam !== null,
-        gradcam_url: result.gradcam_url || undefined,
+        // The ONNX audio branch exposes no intermediate feature maps, so
+        // Grad-CAM is never available at serving time (see routes/screen.py).
+        symptom_contributions: {},
+        gradcam_available: false,
+        gradcam_url: result.gradcam_url ?? undefined,
       },
       next_steps: result.next_steps,
       metadata: {
@@ -92,18 +116,34 @@ function App() {
     navigate("S8_RESULT");
   }, [navigate]);
 
-  const handleQualityFail = useCallback((data: { acceptedCoughs: number; rejectedCoughs: number; noiseLevel: "quiet" | "moderate" | "loud"; clipping: boolean; errorCode: string; snrDb?: number; clippingRatio?: number }) => {
-    dispatch({ type: "SET_RECORDING_DATA", data: { 
-      acceptedCoughs: data.acceptedCoughs,
-      rejectedCoughs: data.rejectedCoughs,
-      qualityError: data.errorCode,
-      noiseLevel: data.noiseLevel,
-      clipping: data.clipping,
-      snrDb: data.snrDb,
-      clippingRatio: data.clippingRatio,
-    } });
-    navigate("S6_QUALITY_CHECK");
-  }, [navigate]);
+  const handleQualityFail = useCallback(
+    (data: {
+      acceptedCoughs: number;
+      rejectedCoughs: number;
+      noiseLevel: "quiet" | "moderate" | "loud";
+      clipping: boolean;
+      errorCode: string;
+      snrDb?: number;
+      clippingRatio?: number;
+      qualityReasons?: string[];
+    }) => {
+      dispatch({
+        type: "SET_RECORDING_DATA",
+        data: {
+          acceptedCoughs: data.acceptedCoughs,
+          rejectedCoughs: data.rejectedCoughs,
+          qualityError: data.errorCode,
+          noiseLevel: data.noiseLevel,
+          clipping: data.clipping,
+          snrDb: data.snrDb,
+          clippingRatio: data.clippingRatio,
+          qualityReasons: data.qualityReasons,
+        },
+      });
+      navigate("S6_QUALITY_CHECK");
+    },
+    [navigate],
+  );
 
   const handleAnalysisError = useCallback((errorCode: string) => {
     dispatch({ type: "SET_ERROR", error: errorCode });
@@ -115,34 +155,58 @@ function App() {
   const handleQualityCheckPass = useCallback(() => {
     navigate("S7_ANALYZE");
   }, [navigate]);
+
+  const handleRerecord = useCallback(() => {
+    dispatch({ type: "SET_RECORDING_DATA", data: {
+      audioBlob: null,
+      acceptedCoughs: 0,
+      rejectedCoughs: 0,
+      qualityError: null,
+      noiseLevel: "quiet",
+      clipping: false,
+      snrDb: undefined,
+      clippingRatio: undefined,
+    }});
+    navigate("S5_RECORD");
+  }, [navigate]);
+
+  const handleQualityCheckBack = useCallback(() => {
+    handleRerecord();
+  }, [handleRerecord]);
+
   const handleRestart = useCallback(() => {
-    if (window.confirm("Mulai dari awal? Semua jawaban dan rekaman akan dihapus.")) {
+    if (window.confirm(copy.common.restartConfirm)) {
       dispatch({ type: "RESET" });
     }
   }, []);
+
   const renderScreen = () => {
     const { currentScreen } = context;
 
     switch (currentScreen) {
+      case "S0_SPLASH":
+        return <S0Splash onDone={() => navigate("S0_HOME")} />;
       case "S0_HOME":
-        return (
-          <S0Home
-            onStart={() => navigate("S1_CONSENT")}
-            onHowItWorks={() => navigate("S11_HOW_IT_WORKS")}
-            onPrivacy={() => navigate("S12_PRIVACY")}
-          />
-        );
+        return <S0Home onStart={() => navigate("S1_CONSENT")} />;
       case "S1_CONSENT":
         return (
-          <S1Consent onContinue={() => navigate("S2_GATE")} onBack={() => navigate("S0_HOME")} />
+          <S1Consent
+            onContinue={handleStartQuestions}
+            onBack={() => navigate("S0_HOME")}
+          />
         );
       case "S2_GATE":
         return (
-          <S2Gate
-            onContinue={handleGateSubmit}
+          <S3Questions
+            gateData={context.gateData}
+            symptomData={context.symptomData}
+            stepIndex={context.questionStep}
+            onStepChange={handleQuestionStepChange}
+            onGateChange={handleGateChange}
+            onSymptomChange={handleSymptomChange}
+            onComplete={handleQuestionsComplete}
             onBack={() => navigate("S1_CONSENT")}
             onOutOfRange={() => navigate("S2x_OUT_OF_RANGE")}
-            onNotTime={() => navigate("S2y_NOT_TIME")}
           />
         );
       case "S2x_OUT_OF_RANGE":
@@ -152,31 +216,29 @@ function App() {
             onBackToStart={() => navigate("S0_HOME")}
           />
         );
-      case "S2y_NOT_TIME":
-        return (
-          <S2yNotTime
-            onBackToStart={() => navigate("S0_HOME")}
-            onFindClinic={() => window.open("https://www.google.com/maps/search/puskesmas+terdekat", "_blank")}
-          />
-        );
       case "S3_SYMPTOMS":
+        // The gate and symptom steps are now a single nine-question flow; this
+        // legacy state redirects to it so persisted state still resolves.
         return (
-          <S3Symptoms
-            onContinue={handleSymptomsSubmit}
-            onBack={() => navigate("S2_GATE")}
-            onHemoptysisYes={() => dispatch({ type: "SET_SYMPTOM_DATA", data: { hemoptysis: "yes" } })}
+          <S3Questions
+            gateData={context.gateData}
+            symptomData={context.symptomData}
+            stepIndex={context.questionStep}
+            onStepChange={handleQuestionStepChange}
+            onGateChange={handleGateChange}
+            onSymptomChange={handleSymptomChange}
+            onComplete={handleQuestionsComplete}
+            onBack={() => navigate("S1_CONSENT")}
+            onOutOfRange={() => navigate("S2x_OUT_OF_RANGE")}
           />
         );
       case "S4_PREP_RECORD":
-        return (
-          <S4PrepRecord
-            onContinue={() => navigate("S5_RECORD")}
-            onBack={() => navigate("S3_SYMPTOMS")}
-            onMicError={() => {}}
-          />
-        );
+        // Legacy state: the design folds mic permission into the record screen
+        // (see handleQuestionsComplete). Resolve any persisted S4 straight into
+        // the record stage instead of rendering the retired prep screen.
+        return <S5Record onComplete={handleRecordingComplete} onBack={() => navigate("S2_GATE")} />;
       case "S5_RECORD":
-        return <S5Record onComplete={handleRecordingComplete} onBack={() => navigate("S4_PREP_RECORD")} />;
+        return <S5Record onComplete={handleRecordingComplete} onBack={() => navigate("S2_GATE")} />;
       case "S6_QUALITY_CHECK":
         return (
           <S6QualityCheck
@@ -187,15 +249,19 @@ function App() {
             errorCode={context.recordingData.qualityError || undefined}
             snrDb={context.recordingData.snrDb}
             clippingRatio={context.recordingData.clippingRatio}
+            qualityReasons={context.recordingData.qualityReasons}
             onContinue={handleQualityCheckPass}
-            onRerecord={() => navigate("S5_RECORD")}
-            onBack={() => navigate("S4_PREP_RECORD")}
+            onRerecord={handleRerecord}
+            onBack={handleQualityCheckBack}
           />
         );
       case "S7_ANALYZE":
+        // Requires a recorded blob; if it is missing (stale deep-link/reset)
+        // fall back home rather than non-null-asserting into a crash.
+        if (!context.recordingData.audioBlob) return <S0Home onStart={() => navigate("S1_CONSENT")} />;
         return (
           <S7Analyze
-            audioBlob={context.recordingData.audioBlob!}
+            audioBlob={context.recordingData.audioBlob}
             gateData={context.gateData}
             symptomData={context.symptomData}
             onResult={handleAnalysisResult}
@@ -205,27 +271,24 @@ function App() {
           />
         );
       case "S8_RESULT":
+        // Reachable only after a successful screen; if the result is missing
+        // (e.g. a stale deep-link or a reset race) fall back home instead of
+        // non-null-asserting into a crash.
+        if (!context.analysisResult) return <S0Home onStart={() => navigate("S1_CONSENT")} />;
         return (
           <S8Result
-            result={context.analysisResult!}
+            result={context.analysisResult}
             showHemoptysisBanner={context.symptomData.hemoptysis === "yes"}
             onFindClinic={() => window.open("https://www.google.com/maps/search/puskesmas+terdekat", "_blank")}
             onWhy={() => navigate("S9_WHY")}
-            onNextSteps={() => navigate("S10_NEXT_STEPS")}
-            onShare={() => {
-              const text = "Saya batuk lebih dari 2 minggu dan akan memeriksakan dahak ke puskesmas. Boleh temani saya?";
-              navigator.share?.({ text }).catch(() => {
-                navigator.clipboard.writeText(text);
-                alert("Teks disalin ke clipboard");
-              });
-            }}
             onRestart={handleRestart}
           />
         );
       case "S9_WHY":
+        if (!context.analysisResult) return <S0Home onStart={() => navigate("S1_CONSENT")} />;
         return (
           <S9Why
-            result={context.analysisResult!}
+            result={context.analysisResult}
             onBack={() => navigate("S8_RESULT")}
             onHowItWorks={() => navigate("S11_HOW_IT_WORKS")}
           />
@@ -236,11 +299,15 @@ function App() {
             onFindClinic={() => window.open("https://www.google.com/maps/search/puskesmas+terdekat", "_blank")}
             onBack={() => navigate("S8_RESULT")}
             onShare={() => {
-              const text = "Saya batuk lebih dari 2 minggu dan akan memeriksakan dahak ke puskesmas. Boleh temani saya?";
-              navigator.share?.({ text }).catch(() => {
-                navigator.clipboard.writeText(text);
-                alert("Teks disalin ke clipboard");
-              });
+              const text = copy.nextSteps.shareMessage;
+              // navigator.share is undefined on desktop/older browsers; the
+              // optional-call chain does not protect the following .catch(),
+              // so branch explicitly and fall back to clipboard.
+              if (typeof navigator.share === "function") {
+                navigator.share({ text }).catch(() => copyToClipboard(text));
+              } else {
+                copyToClipboard(text);
+              }
             }}
           />
         );
@@ -249,7 +316,7 @@ function App() {
       case "S12_PRIVACY":
         return <S12Privacy onBack={() => navigate("S0_HOME")} />;
       default:
-        return <S0Home onStart={() => navigate("S1_CONSENT")} onHowItWorks={() => navigate("S11_HOW_IT_WORKS")} onPrivacy={() => navigate("S12_PRIVACY")} />;
+        return <S0Home onStart={() => navigate("S1_CONSENT")} />;
     }
   };
 

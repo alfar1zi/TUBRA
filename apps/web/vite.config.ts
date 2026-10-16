@@ -10,7 +10,13 @@ export default defineConfig({
     },
   },
   server: {
+    // host:true so the dev server is reachable from other devices on the LAN
+    // and from the Tailscale interface. HTTPS/certs are terminated by
+    // `tailscale serve` (see scripts/serve_tailscale.sh), not by Vite, so the
+    // origin the phone sees is a trusted *.ts.net cert and mic permission works.
+    host: true,
     port: 5173,
+    allowedHosts: [".ts.net"],
     proxy: {
       "/api": {
         target: "http://localhost:8080",

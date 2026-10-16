@@ -1,9 +1,15 @@
-import { forwardRef, type HTMLAttributes } from "react";
+import { forwardRef, type HTMLAttributes, type ReactNode } from "react";
 
-export interface ChoiceCardProps extends HTMLAttributes<HTMLDivElement> {
+/**
+ * OptionRow is a single answer option on the question screens, styled to match
+ * the Figma design: a 342x54 row, 16px corners, 1px border at 20% black, label
+ * on the left and a radio indicator on the right. Selection is signalled with
+ * the brand teal.
+ */
+export interface ChoiceCardProps extends Omit<HTMLAttributes<HTMLDivElement>, "onChange"> {
   selected?: boolean;
   onClick?: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
   disabled?: boolean;
 }
 
@@ -12,15 +18,17 @@ export const ChoiceCard = forwardRef<HTMLDivElement, ChoiceCardProps>(
     return (
       <div
         ref={ref}
-        className={`
-          relative p-4 rounded-xl border-2 transition-all duration-150
-          ${selected ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white hover:border-gray-300"}
-          ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
-          ${className}
-        `}
+        className={[
+          "flex items-center justify-between gap-3 h-[54px] px-4 rounded-lg border bg-transparent transition-colors",
+          selected ? "border-brand bg-brand-soft/40" : "border-black/20",
+          disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:border-black/40",
+          className,
+        ].join(" ")}
         onClick={disabled ? undefined : onClick}
-        role={onClick && !disabled ? "button" : undefined}
+        role={onClick && !disabled ? "radio" : undefined}
         tabIndex={onClick && !disabled ? 0 : undefined}
+        aria-checked={onClick && !disabled ? selected : undefined}
+        aria-disabled={disabled || undefined}
         onKeyDown={(e) => {
           if (onClick && !disabled && (e.key === "Enter" || e.key === " ")) {
             e.preventDefault();
@@ -29,25 +37,15 @@ export const ChoiceCard = forwardRef<HTMLDivElement, ChoiceCardProps>(
         }}
         {...props}
       >
-        <div className="flex items-start gap-3">
-          <div
-            className={`
-              flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors
-              ${selected ? "border-blue-600 bg-blue-600" : "border-gray-300"}
-            `}
-            aria-hidden="true"
-          >
-            {selected && (
-              <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-          </div>
-          <div className="flex-1 min-w-0">{children}</div>
-        </div>
-        {selected && (
-          <div className="absolute inset-0 border-2 border-blue-600 rounded-xl pointer-events-none" aria-hidden="true" />
-        )}
+        <span className="text-base font-alt leading-5 text-text-primary">{children}</span>
+        <span
+          className={`flex-shrink-0 grid place-items-center w-5 h-5 rounded-full border ${
+            selected ? "border-brand" : "border-black/30"
+          }`}
+          aria-hidden="true"
+        >
+          {selected && <span className="w-2.5 h-2.5 rounded-full bg-brand" />}
+        </span>
       </div>
     );
   }

@@ -1,3 +1,13 @@
+// Base URL of the API service. Empty by default, so requests stay relative
+// ("/api/...") and hit the Vite dev proxy locally. When the web app is deployed
+// on its own (for example Vercel) with the API hosted elsewhere, set
+// VITE_API_BASE to the backend origin, e.g. https://tbcare-api.example.com.
+const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
+
+function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
 export interface EchoTestResponse {
   sample_rate: number;
   duration_s: number;
@@ -10,42 +20,38 @@ export interface EchoTestResponse {
   };
 }
 
-export interface EchoTestError {
-  error: {
-    code: string;
-    message: string;
-  };
+export interface ApiErrorBody {
+  code: string;
+  retryable: boolean;
+  message: string;
+  details?: Record<string, unknown>;
 }
+
+export interface EchoTestError {
+  error: ApiErrorBody;
+}
+
+export type CoughDuration = "2_4" | "4_8" | "8_plus";
+export type Sex = "male" | "female";
+export type SmokingStatus = "never" | "former" | "current";
 
 export interface ScreenPayload {
   age: number;
-  sex: "M" | "F";
-  cough_duration_weeks: number;
-  fever: "yes" | "no";
-  night_sweats: "yes" | "no";
-  weight_loss: "yes" | "no";
-  hemoptysis: "yes" | "no";
-  chest_pain: "yes" | "no";
-  fatigue: "yes" | "no";
-  smoking: "yes" | "no";
-}
-
-export interface SymptomContribution {
-  symptom: string;
-  contribution: number;
-}
-
-export interface Explanation {
-  symptom_contributions: SymptomContribution[];
-  gradcam_available: boolean;
-  gradcam_url: string | null;
+  sex: Sex;
+  cough_duration: CoughDuration;
+  fever: boolean | null;
+  night_sweats: boolean | null;
+  weight_loss: boolean | null;
+  hemoptysis: boolean | null;
+  prior_tb: boolean | null;
+  smoking: SmokingStatus | null;
 }
 
 export interface ScreenMetadata {
   model_version: string;
   probability: number;
-  logit: number;
-  thresholds: Record<string, number>;
+  prob_audio?: number | null;
+  prob_clinical?: number | null;
   cough_segments_used: number;
   audio_metrics: {
     sample_rate: number;
@@ -64,30 +70,27 @@ export interface ScreenMetadata {
     reasons: string[];
   };
   processing_time_ms: number;
-  symptom_explanations: string[];
-  gradcam: number[][] | null;
 }
 
 export interface ScreenResponse {
   tier: "A" | "B" | "C";
-  probability: number;
+  tier_label?: string | null;
   explanation: string;
+  next_steps: string[];
+  actions?: string[] | null;
+  disclaimer?: string | null;
   gradcam_url: string | null;
   metadata: ScreenMetadata;
-  next_steps: string[];
 }
 
-export interface ScreenErrorResponse {
-  error: string;
-  message: string;
-  details?: Record<string, unknown>;
-}
+export type ScreenErrorResponse = ApiErrorBody;
 
 export class ScreenApiError extends Error {
   constructor(
     public readonly code: string,
     public readonly message: string,
-    public readonly details?: Record<string, unknown>
+    public readonly details?: Record<string, unknown>,
+    public readonly retryable: boolean = false,
   ) {
     super(code);
     this.name = "ScreenApiError";
@@ -98,7 +101,7 @@ export async function postEchoTest(audioBlob: Blob): Promise<EchoTestResponse> {
   const formData = new FormData();
   formData.append("audio", audioBlob, "recording.wav");
 
-  const response = await fetch("/api/v1/echo-test", {
+  const response = await fetch(apiUrl("/api/v1/echo-test"), {
     method: "POST",
     body: formData,
   });
@@ -111,25 +114,30 @@ export async function postEchoTest(audioBlob: Blob): Promise<EchoTestResponse> {
   return response.json();
 }
 
-export async function postScreen(audioBlob: Blob, payload: ScreenPayload): Promise<ScreenResponse> {
+export async function postScreen(
+  audioBlob: Blob,
+  payload: ScreenPayload,
+  signal?: AbortSignal
+): Promise<ScreenResponse> {
   const formData = new FormData();
   formData.append("audio", audioBlob, "recording.wav");
   formData.append("payload", JSON.stringify(payload));
 
-  const response = await fetch("/api/v1/screen", {
+  const response = await fetch(apiUrl("/api/v1/screen"), {
     method: "POST",
     body: formData,
+    signal,
   });
 
   if (!response.ok) {
-    const errorData: ScreenErrorResponse = await response.json();
-    throw new ScreenApiError(errorData.error, errorData.message, errorData.details);
+    const { error } = (await response.json()) as { error: ScreenErrorResponse };
+    throw new ScreenApiError(error.code, error.message, error.details, error.retryable);
   }
 
   return response.json();
 }
 
 export async function getHealth(): Promise<{ status: string; model_version: string }> {
-  const response = await fetch("/api/v1/health");
+  const response = await fetch(apiUrl("/api/v1/health"));
   return response.json();
 }

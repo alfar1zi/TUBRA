@@ -1,11 +1,11 @@
-import type { ScreenPayload } from "@/api/client";
+import type { CoughDuration, ScreenPayload } from "@/api/client";
 
 export type ScreenId =
+  | "S0_SPLASH"
   | "S0_HOME"
   | "S1_CONSENT"
   | "S2_GATE"
   | "S2x_OUT_OF_RANGE"
-  | "S2y_NOT_TIME"
   | "S3_SYMPTOMS"
   | "S4_PREP_RECORD"
   | "S5_RECORD"
@@ -18,17 +18,22 @@ export type ScreenId =
   | "S12_PRIVACY";
 export interface GateData {
   age: number | null;
-  coughDurationWeeks: number | null;
+  /** Cough-duration bucket, exactly as the API expects (`"2_4"` | `"4_8"` | `"8_plus"`). */
+  coughDuration: CoughDuration | null;
 }
 
+/** Symptom answers as captured on S3. `"yes"`/`"no"` are literal; `null` = not answered. */
+export type TriState = "yes" | "no" | null;
+
 export interface SymptomData {
-  fever: "yes" | "no" | null;
-  nightSweats: "yes" | "no" | null;
-  weightLoss: "yes" | "no" | null;
-  hemoptysis: "yes" | "no" | null;
-  chestPain: "yes" | "no" | null;
-  fatigue: "yes" | "no" | null;
-  smoking: "yes" | "no" | null;
+  sex: TriState; // "yes" = male, "no" = female, null = skipped
+  fever: TriState;
+  nightSweats: TriState;
+  weightLoss: TriState;
+  hemoptysis: TriState;
+  priorTb: TriState;
+  /** "yes" = current smoker, "no" = never, "unknown" = former, null = skipped. */
+  smoking: "yes" | "no" | "unknown" | null;
 }
 
 export interface RecordingData {
@@ -40,6 +45,8 @@ export interface RecordingData {
   clipping?: boolean;
   snrDb?: number;
   clippingRatio?: number;
+  /** Raw reason strings from the API's quality rejection, shown verbatim. */
+  qualityReasons?: string[];
 }
 
 export interface AnalysisResult {
@@ -60,6 +67,8 @@ export interface AnalysisResult {
 
 export interface ScreenContext {
   currentScreen: ScreenId;
+  /** Index of the question currently shown in the S3 nine-question flow. */
+  questionStep: number;
   gateData: GateData;
   symptomData: SymptomData;
   recordingData: RecordingData;
@@ -70,6 +79,7 @@ export interface ScreenContext {
 
 export type ScreenAction =
   | { type: "GO_TO"; screen: ScreenId }
+  | { type: "SET_QUESTION_STEP"; step: number }
   | { type: "SET_GATE_DATA"; data: Partial<GateData> }
   | { type: "SET_SYMPTOM_DATA"; data: Partial<SymptomData> }
   | { type: "SET_RECORDING_DATA"; data: Partial<RecordingData> }
@@ -79,18 +89,19 @@ export type ScreenAction =
   | { type: "RESET" };
 
 export const initialContext: ScreenContext = {
-  currentScreen: "S0_HOME",
+  currentScreen: "S0_SPLASH",
+  questionStep: 0,
   gateData: {
     age: null,
-    coughDurationWeeks: null,
+    coughDuration: null,
   },
   symptomData: {
+    sex: null,
     fever: null,
     nightSweats: null,
     weightLoss: null,
     hemoptysis: null,
-    chestPain: null,
-    fatigue: null,
+    priorTb: null,
     smoking: null,
   },
   recordingData: {
@@ -102,6 +113,7 @@ export const initialContext: ScreenContext = {
     clipping: false,
     snrDb: undefined,
     clippingRatio: undefined,
+    qualityReasons: undefined,
   },
   analysisResult: null,
   demoMode: false,
@@ -112,6 +124,8 @@ export function screenReducer(context: ScreenContext, action: ScreenAction): Scr
   switch (action.type) {
     case "GO_TO":
       return { ...context, currentScreen: action.screen, error: null };
+    case "SET_QUESTION_STEP":
+      return { ...context, questionStep: action.step };
     case "SET_GATE_DATA":
       return { ...context, gateData: { ...context.gateData, ...action.data } };
     case "SET_SYMPTOM_DATA":
@@ -136,8 +150,7 @@ export function canProceedFromGate(gateData: GateData): boolean {
     gateData.age !== null &&
     gateData.age >= 18 &&
     gateData.age <= 100 &&
-    gateData.coughDurationWeeks !== null &&
-    gateData.coughDurationWeeks >= 2
+    gateData.coughDuration !== null
   );
 }
 
@@ -149,16 +162,35 @@ export function buildScreenPayload(
   gateData: GateData,
   symptomData: SymptomData
 ): ScreenPayload {
+  // S2 blocks "none"/"<2 weeks", so coughDuration is always a valid bucket here.
+  const coughDuration = gateData.coughDuration;
+  const age = gateData.age;
+  if (coughDuration === null || age === null) {
+    throw new Error("buildScreenPayload: gate data incomplete");
+  }
+
+  let sex: ScreenPayload["sex"];
+  if (symptomData.sex === "yes") sex = "male";
+  else if (symptomData.sex === "no") sex = "female";
+  else throw new Error("buildScreenPayload: sex is required");
+
+  let smoking: ScreenPayload["smoking"];
+  if (symptomData.smoking === "yes") smoking = "current";
+  else if (symptomData.smoking === "no") smoking = "never";
+  else if (symptomData.smoking === "unknown") smoking = "former";
+  else smoking = null;
+
+  const yes = (v: TriState): boolean | null => (v === null ? null : v === "yes");
+
   return {
-    age: gateData.age!,
-    sex: "M",
-    cough_duration_weeks: gateData.coughDurationWeeks!,
-    fever: symptomData.fever!,
-    night_sweats: symptomData.nightSweats!,
-    weight_loss: symptomData.weightLoss!,
-    hemoptysis: symptomData.hemoptysis!,
-    chest_pain: symptomData.chestPain!,
-    fatigue: symptomData.fatigue!,
-    smoking: symptomData.smoking!,
+    age,
+    sex,
+    cough_duration: coughDuration,
+    fever: yes(symptomData.fever),
+    night_sweats: yes(symptomData.nightSweats),
+    weight_loss: yes(symptomData.weightLoss),
+    hemoptysis: yes(symptomData.hemoptysis),
+    prior_tb: yes(symptomData.priorTb),
+    smoking,
   };
 }

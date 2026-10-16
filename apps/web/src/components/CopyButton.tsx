@@ -35,7 +35,7 @@ export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(
         ref={ref}
         type="button"
         onClick={handleCopy}
-        className={`px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500 ${className}`}
+        className={`px-4 py-2 text-sm font-medium text-brand bg-brand-soft rounded-lg hover:bg-brand-soft/80 focus:outline-none focus:ring-2 focus:ring-brand ${className}`}
         {...props}
       >
         {copied ? successLabel : children ?? defaultLabel}
