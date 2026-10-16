@@ -26,31 +26,58 @@ export interface S8ResultProps {
   onRestart: () => void;
 }
 
+/**
+ * One entry per tier. The components are the same on every tier (one card,
+ * one badge, the same type scale and the same buttons); only the Figma tier
+ * colour, the icon and the wording change. The emphasis comes from order and
+ * font weight inside that same card, never from a different layout. Tier A and
+ * B use a darker text on their soft fills for contrast, because the vivid
+ * danger and warning colours stayed under 4.5:1 on their own surfaces. Tier C
+ * is a neutral card: the house rules forbid green for any result status, and
+ * a lower concern should not borrow a colour that reads as an all-clear.
+ */
 const TIER_THEME = {
   A: {
     surface: "border-danger bg-danger-soft",
     badge: "bg-[#FFC2CE] text-danger",
+    accentText: "text-[#A82F4A]",
     icon: "/design/icon-tier-a.svg",
     label: "Perlu segera diperiksa",
+    primaryLabel: copy.result.tierA.primaryAction,
+    deadline: "1-2 hari",
   },
   B: {
     surface: "border-warning bg-warning-soft",
     badge: "bg-[#FFE683] text-[#92400E]",
+    accentText: "text-[#92400E]",
     icon: "/design/icon-warning.svg",
     label: "Perlu diperiksa minggu ini",
+    primaryLabel: copy.result.tierB.primaryAction,
+    deadline: "Minggu ini",
   },
   C: {
-    surface: "border-success bg-success-soft",
-    badge: "bg-[#C6F0D0] text-success",
+    surface: "border-black/15 bg-white",
+    badge: "bg-[#E3E3E3] text-text-primary",
+    accentText: "text-text-primary/70",
     icon: "/design/icon-tier-c.svg",
     label: "Risiko relatif lebih rendah",
+    primaryLabel: copy.result.tierC.primaryAction,
+    deadline: null,
   },
 } as const;
 
+type Tier = keyof typeof TIER_THEME;
+type TierConfig =
+  | (typeof copy.result)["tierA"]
+  | (typeof copy.result)["tierB"]
+  | (typeof copy.result)["tierC"];
+type TierTheme = (typeof TIER_THEME)[Tier];
+
 /**
- * S8Result reproduces Figma frame 27:658: the screening result. The tier card
- * keeps the Figma layout but takes its colour and icon from the tier, so a
- * high-concern result no longer looks identical to a low-concern one.
+ * S8Result is the screen behind "Lihat hasil". It renders the tier the server
+ * returned, not a fixed one: the banner, the headline, the badge icon and the
+ * primary action all come from `result.tier`. Screens drive their own
+ * transitions (see App), so reaching this screen is never a dead end.
  */
 export function S8Result({
   result,
@@ -59,12 +86,13 @@ export function S8Result({
   onWhy,
   onRestart,
 }: S8ResultProps) {
+  const tier: Tier = result.tier;
   const config = {
     A: copy.result.tierA,
     B: copy.result.tierB,
     C: copy.result.tierC,
-  }[result.tier];
-  const theme = TIER_THEME[result.tier];
+  }[tier];
+  const theme = TIER_THEME[tier];
 
   return (
     <MobileShell>
@@ -92,36 +120,7 @@ export function S8Result({
             </div>
           )}
 
-          {/* Tier card (Figma Frame 8749: y=162, 342x92) */}
-          <div
-            className={`mt-[29px] h-[92px] rounded-lg border px-4 ${theme.surface}`}
-            data-tier={result.tier}
-          >
-            <div className="flex items-center gap-3 h-full">
-              <span
-                className={`grid place-items-center w-[63px] h-[69px] rounded-[40px] flex-shrink-0 ${theme.badge}`}
-                aria-hidden="true"
-              >
-                <img
-                  src={theme.icon}
-                  alt=""
-                  aria-hidden="true"
-                  className="w-[33px] h-[29px]"
-                />
-              </span>
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                  {theme.label}
-                </p>
-                <p className="mt-[2px] text-lg font-medium leading-[25px] text-text-primary">
-                  {config.text}
-                </p>
-                <p className="mt-[2px] text-sm font-normal leading-[18px] text-text-primary/80">
-                  {config.description}
-                </p>
-              </div>
-            </div>
-          </div>
+          <TierCard tier={tier} theme={theme} config={config} />
 
           {/* Reasons card (Figma Frame 8753: y=267, 342x343). The whole card is the
             entry point to the "why" detail screen; Figma has no separate link. */}
@@ -172,13 +171,7 @@ export function S8Result({
         </p>
 
         <div className="mt-[11px] space-y-[6px]">
-          <button
-            type="button"
-            onClick={onFindClinic}
-            className="w-full h-[58px] rounded-lg bg-gradient-to-b from-brand to-brand-deep text-lg font-medium text-text-inverse transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
-          >
-            {copy.result.findClinicButton}
-          </button>
+          <PrimaryAction tier={tier} label={theme.primaryLabel} onClick={onFindClinic} />
           <button
             type="button"
             onClick={onRestart}
@@ -195,6 +188,85 @@ export function S8Result({
         />
       </div>
     </MobileShell>
+  );
+}
+
+/**
+ * The primary action keeps the brand gradient on every tier so the page still
+ * reads as one product; only the wording changes with the tier.
+ */
+function PrimaryAction({
+  tier,
+  label,
+  onClick,
+}: {
+  tier: Tier;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-tier-action={tier}
+      className="w-full h-[58px] rounded-lg bg-gradient-to-b from-brand to-brand-deep text-lg font-medium text-text-inverse transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * The tier card (Figma Frame 8749: y=162). Every tier uses this layout: a soft
+ * fill with a matching outline, a badge on the left and the tier message on
+ * the right. A and B add the deadline to the label line; tier A also raises
+ * the heading one step in size and weight so it leads the page, and tier C
+ * stays neutral.
+ */
+function TierCard({
+  tier,
+  theme,
+  config,
+}: {
+  tier: Tier;
+  theme: TierTheme;
+  config: TierConfig;
+}) {
+  return (
+    <section
+      data-tier={tier}
+      aria-label={theme.label}
+      className={`mt-[29px] rounded-lg border px-4 py-3 ${theme.surface}`}
+    >
+      <div className="flex items-center gap-3">
+        <span
+          className={`grid place-items-center w-[63px] h-[69px] rounded-[40px] flex-shrink-0 ${theme.badge}`}
+          aria-hidden="true"
+        >
+          <img src={theme.icon} alt="" aria-hidden="true" className="w-[33px] h-[29px]" />
+        </span>
+        <div className="min-w-0">
+          <p className={`text-[11px] font-semibold uppercase tracking-wide ${theme.accentText}`}>
+            {theme.label}
+            {theme.deadline !== null && (
+              <span className="ml-2 font-medium normal-case">· {theme.deadline}</span>
+            )}
+          </p>
+          <p
+            className={`mt-[2px] leading-[25px] ${
+              tier === "A"
+                ? `text-xl font-semibold ${theme.accentText}`
+                : "text-lg font-medium text-text-primary"
+            }`}
+          >
+            {config.text}
+          </p>
+          <p className="mt-[2px] text-sm font-normal leading-[18px] text-text-primary/80">
+            {config.description}
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 

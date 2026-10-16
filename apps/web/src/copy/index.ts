@@ -211,19 +211,23 @@ export const copy = {
       text: "Segera periksa dahak!",
       description:
         "Berdasarkan pola batuk dan gejala anda, disarankan segera memeriksa dahak ke fasilitas kesehatan.",
+      primaryAction: "Cek puskesmas terdekat",
     },
     tierB: {
       label: "Tier B",
       text: "Cek dahak minggu ini!",
       description:
         "Berdasarkan pola batuk anda, disarankan tes dahak minggu ini.",
+      primaryAction: "Cari jadwal cek dahak minggu ini",
     },
     tierC: {
       label: "Tier C",
       text: "Tetap periksa dahak",
       description:
         "Meski risiko relatif lebih rendah, pemeriksaan dahak tetap disarankan untuk memastikan.",
+      primaryAction: "Cek puskesmas terdekat",
     },
+    deadlineLabel: "Periksa dalam",
     disclaimer: "Hasil ini merupakan skrining awal, bukan diagnosis medis.",
     whyIntro: "Alasan dari hasil batuk dan gejala",
     reasons: {

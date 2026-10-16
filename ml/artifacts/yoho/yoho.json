@@ -1,0 +1,24 @@
+{
+  "input_name": "logmel",
+  "output_name": "yoho",
+  "input_shape": [
+    1,
+    1,
+    64,
+    640
+  ],
+  "output_shape": [
+    1,
+    3,
+    40
+  ],
+  "time_stride": 16,
+  "n_steps": 40,
+  "max_diff_torch_onnx": 2.384185791015625e-07,
+  "segment": {
+    "presence_threshold": 0.5,
+    "merge_gap_s": 0.2,
+    "max_event_duration_s": 2.0,
+    "nucleus_tolerance_s": 0.3
+  }
+}

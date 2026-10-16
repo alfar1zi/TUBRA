@@ -107,6 +107,100 @@ atau `numba`; dependensi itu hanya dipakai untuk pelatihan di `ml/`.
 | Threshold Tier A / B | 0.5552 / 0.1937 | `model_card.metrics.threshold_A/B` |
 | Paritas torch dan ONNX | max\|selisih logit\| = 1.8e-07 | `ml/tests/test_tta_parity.py` |
 
+## Deteksi batuk YOHO
+
+Server tidak lagi memotong batas batuk dari ambang energi saja. Setiap rekaman
+melewati `ml/src/yoho/`:
+
+1. **Nucleus.** Frame RMS yang cukup keras dan cukup lebar dicari dulu
+   (`find_nuclei`). Batuk selalu punya satu ledakan broadband, jadi kandidat ini
+   yang menentukan berapa jendela yang disaring.
+2. **Regresi batas.** Untuk tiap nucleus dipotong konteks 8 detik dan
+   dikirim ke MobileNet kecil. Kepala jaringan memberi tiga bidang per kelas
+   pada 40 langkah 0.2 detik: ada atau tidaknya event, pergeseran awal, dan
+   pergeseran akhir. Batas event dibaca dari regresi ini, bukan dari ambang
+   energi.
+3. **Vote.** Tiap langkah yang lolos ambang presence memberi satu suara
+   `(awal, akhir)` dengan skor presence kali porsi langkah yang tertutup. Suara
+   dari jendela yang tumpang tindih digabung, lalu event hanya dihitung kalau ada
+   nucleus dalam toleransi 0.3 detik dari batasnya. Nucleus yang belum terjawab
+   tetap jadi segmen sendiri (nucleus + 0.05 detik sampai + 0.25 detik), karena
+   batuk yang terlewat jaringan tetap batuk. Event di atas 2 detik dibuang
+   karena itu gabungan beberapa batuk. Jendela dengan beberapa batuk otomatis
+   jadi beberapa segmen.
+
+Referensi: Venkatesh, Moffat & Miranda, *YOHO: You Only Hear Once*, 2022
+(arXiv 2109.00962). Implementasi di repo ini bukan salinan kode mereka:
+tugasnya satu kelas (batuk), jendela dan resolusi langkahnya dipilih sendiri,
+dan penilaian loss-nya ditulis ulang.
+
+### Batas yang perlu diketahui
+
+- **Label lemah.** Batas batuk pada data latih berasal dari trim envelope dan
+  segmen batuk yang dicatat per partisipan, bukan anotasi sampel per sampel.
+  Skor batas karena itu tetap perkiraan.
+- **Hanya batuk yang dilatih.** Kelas negatif (diam, suara keras non-batuk)
+  hanya dipakai sebagai penekan bias dengan porsi kecil, tidak sebagai kelas
+  kedua.
+- **Training di CPU** dengan 4 thread, batch 32. Epoch penuh makan waktu belasan
+  menit.
+- **Audio latih** dari CODA-TB dan ESC-50. ESC-50 berlisensi CC BY-NC 3.0, jadi
+  hasil latihnya tidak untuk penggunaan komersial.
+- **Counter live di web** masih memakai energi dan spectral gate, jadi angkanya
+  bisa berbeda sedikit dari hitungan akhir server.
+- **Nucleus dibatasi 6 per rekaman** (`max_nuclei`). Rekaman yang punya lebih
+  dari enam suara keras memproses enam kandidat terkuat saja.
+- **Klasifikasi batuk vs suara lain belum dilatih.** Jaringan hanya dilatih
+  untuk menempatkan batas batuk. Suara di telinga yang mirip batuk, misalnya
+  bersin, bisa kehilangan batasnya dan tertahan sebagian oleh nucleus; tidak
+  ada kelas kedua yang memfilter suara seperti itu.
+- Angka evaluasi dilaporkan apa adanya dari `ml/scripts/evaluate_yoho.py` dan
+  log training. Jangan menaikkan klaim sebelum ada evaluasi di audio lapangan.
+
+### Hasil pada fold 0
+
+Dua sumber, keduanya fold 0 dan tidak saling menggantikan:
+
+- **Streaming** (480 window validasi berisi batuk, plus batuk yang ditempel ke
+  rekaman pasif): jalur deploy yang sama, batas dihitung dari suara batuk,
+  window dinilai per segmen.
+- **Evaluasi resmi** (`evaluate_yoho.py`): 200 clip CODA-TB yang tidak dilatih
+  dan suara negatif. Recall di sini berarti "ada satu segmen yang mengenai
+  batuk", bukan penempatan batas per batuk.
+
+| Uji | Hasil | Sumber |
+| --- | --- | --- |
+| Streaming, semua window | P 0.803 / R 0.957 / F1 0.873 | `streaming_predictions` |
+| Streaming, batuk tersusun | P 0.760 / R 0.991 / F1 0.860 | `streaming-compose` |
+| Streaming, batuk ditempel | P 0.900 / R 0.900 / F1 0.900 | `streaming-pastefree` |
+| CODA-TB holdout, 200 clip | R 0.990 / P 0.990, 2 false alarm (4.5 per jam) | `eval_fold0.coda_holdout` |
+| Baseline energi, 200 clip yang sama | R 0.850, 24 false alarm | `eval_fold0.energy_baseline_coda` |
+| Baseline energi, 720 suara negatif | 3855 event | `eval_fold0.energy_baseline_negatives` |
+| ESC-50 hard negative, 320 clip | 331 event, 465.5 per jam | `eval_fold0.esc50_hard` |
+| ESC-50 bersin, 40 clip | 58 event | `eval_fold0.esc50_sneeze` |
+| ESC-50 batuk, 40 clip | 0 segmen yang mengenai batuk | `eval_fold0.esc50_cough` |
+
+Baris ESC-50 jangan dibaca sebagai keunggulan. YOHO lebih sedikit memotong
+suara non-batuk daripada baseline energi, tapi event per jam di hard negative
+masih jauh dari nol: hampir setiap clip punya satu segmen di sekitar suara
+utamanya. Baris batuk ESC-50 juga kegagalan, karena satu crop 5 detik yang
+memuat batuk tidak menghasilkan segmen yang mengenai batuk. Keduanya bukti
+bahwa penempatan batas belum sama dengan klasifikasi batuk.
+
+### Menjalankan
+
+```bash
+python3 ml/scripts/train_yoho.py --fold 0 --epochs 10 --steps-per-epoch 150 --batch-size 32
+python3 ml/scripts/export_yoho.py --checkpoint ml/artifacts/yoho/yoho_fold0.pt --out ml/artifacts/yoho
+python3 ml/scripts/evaluate_yoho.py --checkpoint ml/artifacts/yoho/yoho_fold0.pt
+```
+
+Ekspor menulis `yoho.onnx` (bobot di file `.data` di sebelahnya) dan `yoho.json`
+yang mencatat bentuk input/output, stride waktu, selisih torch-ONNX, dan
+konstanta segmentasi yang dipakai setelah jaringan. Kalau `yoho.onnx` tidak ada atau
+gagal dimuat, server kembali ke pemotongan energi lama, jadi deployment tanpa
+artefak ini tetap bisa menerima rekaman.
+
 > **Catatan kejujuran.** AUROC fusion (0.8345) hampir seluruhnya berasal dari
 > cabang klinis (0.8235); cabang audio hanya menyumbang ~0.011 AUROC. Ini hasil
 > validasi silang pada 4 epoch CPU, **bukan** uji klinis. Jangan menaikkan status

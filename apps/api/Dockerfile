@@ -24,6 +24,8 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 # image; relying on the compose bind-mount made a plain `docker run` fail with
 # FileNotFoundError on the joblib/manifest files.
 COPY ml/artifacts/ ./ml/artifacts/
+COPY ml/__init__.py ./ml/__init__.py
+COPY ml/src/yoho ./ml/src/yoho
 COPY apps/api/tbcare_api ./tbcare_api
 
 ENV PORT=8080

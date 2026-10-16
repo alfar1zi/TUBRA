@@ -176,13 +176,15 @@ function percentile(values: number[], p: number): number {
 /**
  * Live cough counter.
  *
- * Mirrors the server algorithm in `apps/api/tbcare_api/audio/events.py`
- * (`detect_cough_events`) so what the user sees while recording is what the
- * server will count: stage 1 is short-term RMS energy with hysteresis (above
- * the noise floor plus `noiseMarginDb` to trigger, `hysteresisDb` below to
- * release) inside a min/max cough duration window; stage 2 is a spectral gate
- * that keeps a candidate only when its mean spectral centroid and
- * zero-crossing rate look like a cough rather than a tone, a tap or speech.
+ * Counts a rough estimate on the device, using the same energy and spectral
+ * gate as `apps/api/tbcare_api/audio/events.py` (`detect_cough_events`):
+ * stage 1 is short-term RMS energy with hysteresis (above the noise floor plus
+ * `noiseMarginDb` to trigger, `hysteresisDb` below to release) inside a
+ * min/max cough duration window; stage 2 is a spectral gate that keeps a
+ * candidate only when its mean spectral centroid and zero-crossing rate look
+ * like a cough rather than a tone, a tap or speech. The server now refines
+ * boundaries with the YOHO network, so the final count can differ from this
+ * live estimate.
  *
  * Two properties matter for a live count:
  *
