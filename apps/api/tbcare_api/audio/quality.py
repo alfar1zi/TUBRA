@@ -2,6 +2,7 @@ import numpy as np
 from .wav_io import validate_wav, WAVValidationError
 from .resample import ensure_sample_rate
 from .events import quality_gate, detect_cough_events
+from .cough_segments import extract_segments, segment_coughs
 from .config import AudioConfig, AUDIO_CONFIG
 
 
@@ -71,24 +72,15 @@ def extract_cough_segments(
     config: AudioConfig | None = None,
     max_segments: int = 5,
 ) -> list[np.ndarray]:
-    """
-    Extract cough segments from audio based on detected events.
-    Returns list of float32 arrays (each segment normalized).
+    """Cut up to ``max_segments`` coughs, using YOHO when the model is present.
+
+    The energy gate runs first: it is cheap and its events are what YOHO falls
+    back to. When YOHO finds nothing there is nothing to prefer it for, so the
+    energy events stand.
     """
     if config is None:
         config = AUDIO_CONFIG
 
-    events, _, _ = detect_cough_events(audio, sample_rate, config)
-
-    segments = []
-    for start_s, end_s in events[:max_segments]:
-        start_idx = int(start_s * sample_rate)
-        end_idx = int(end_s * sample_rate)
-        if end_idx > start_idx and end_idx <= len(audio):
-            segment = audio[start_idx:end_idx]
-            # Normalize each segment
-            peak = np.max(np.abs(segment)) + 1e-12
-            segment = segment / peak
-            segments.append(segment)
-
-    return segments
+    energy_events, _, _ = detect_cough_events(audio, sample_rate, config)
+    events, _backend = segment_coughs(audio, sample_rate, energy_events)
+    return extract_segments(audio, sample_rate, events, max_segments)

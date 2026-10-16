@@ -1,5 +1,6 @@
 import numpy as np
 from .config import AUDIO_CONFIG
+from .cough_segments import segment_coughs
 
 
 def rms_energy_frames(audio: np.ndarray, frame_length: int, hop_length: int) -> np.ndarray:
@@ -241,7 +242,9 @@ def quality_gate(
         config = AUDIO_CONFIG
 
     events, energy_db, noise_floor_db = detect_cough_events(audio, sample_rate, config)
+    energy_events = events
 
+    events, backend = segment_coughs(audio, sample_rate, energy_events)
     snr_db = estimate_snr(audio, events, sample_rate, noise_floor_db)
     clipping_ratio = estimate_clipping_ratio(audio)
     num_coughs = len(events)
@@ -287,6 +290,7 @@ def quality_gate(
     details = {
         "passed": passed,
         "num_coughs": num_coughs,
+        "cough_backend": backend,
         "cough_segments_ms": [[int(s * 1000), int(e * 1000)] for s, e in events],
         "snr_db": round(signal_snr_db, 1),
         "peak_margin_db": round(peak_margin_db, 1),
