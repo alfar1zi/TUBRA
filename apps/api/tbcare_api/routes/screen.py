@@ -60,7 +60,10 @@ def _artifacts_candidates() -> list[Path]:
         candidates.append(Path(configured))
 
     # Repo checkout: .../apps/api/tbcare_api/routes/screen.py -> repo root.
-    candidates.append(file_path.parents[4] / "ml" / "artifacts")
+    # The container image places the package at /app/tbcare_api instead, which
+    # is two levels shallower, so walk up only when the depth allows it.
+    if len(file_path.parents) > 4:
+        candidates.append(file_path.parents[4] / "ml" / "artifacts")
     # Container image / compose mount.
     candidates.append(Path("/app/ml/artifacts"))
     candidates.append(file_path.parents[2] / "artifacts")
